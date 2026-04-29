@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# uv virtual environment
+.venv/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite3
+
+# PostgreSQL / Docker volumes
+postgres_data/
+pgdata/
+
+# Docker
+.docker/
+docker-compose.override.yml
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checker / Linter cache
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Build / Packaging
+build/
+dist/
+*.egg-info/
+
+# Uploaded files / local storage
+uploads/
+media/
+storage/
+
+# Model artifacts / temporary processing files
+models/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.pkl
+
+# Cache
+.cache/
+tmp/
+temp/
