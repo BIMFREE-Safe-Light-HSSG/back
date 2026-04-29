@@ -1,0 +1,36 @@
+{$API_PUBLIC_DOMAIN} {
+	@cors_preflight method OPTIONS
+
+	header {
+		Access-Control-Allow-Origin "{$FRONTEND_ORIGIN}"
+		Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
+		Access-Control-Allow-Headers "*"
+		Vary "Origin"
+	}
+
+	respond @cors_preflight "" 204
+
+	reverse_proxy host.docker.internal:8000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+{$MINIO_PUBLIC_DOMAIN} {
+	@cors_preflight method OPTIONS
+
+	header @cors_preflight {
+		Access-Control-Allow-Origin "{$FRONTEND_ORIGIN}"
+		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
+		Access-Control-Allow-Headers "*"
+		Access-Control-Expose-Headers "ETag"
+		Vary "Origin"
+	}
+
+	respond @cors_preflight "" 204
+
+	reverse_proxy minio:9000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}

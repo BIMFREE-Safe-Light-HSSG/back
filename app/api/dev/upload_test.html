@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BIMFree Upload Test</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --text: #17202a;
+      --muted: #667085;
+      --line: #d8dde6;
+      --accent: #117a65;
+      --accent-strong: #0b5d4c;
+      --warn: #b54708;
+      --error: #b42318;
+      --ok: #067647;
+      --code: #101828;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(1080px, calc(100vw - 32px));
+      margin: 32px auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: flex-end;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .origin {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      background: #fff;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 430px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: 0 1px 2px rgb(16 24 40 / 5%);
+    }
+
+    .panel h2 {
+      margin: 0 0 16px;
+      font-size: 16px;
+      font-weight: 720;
+      letter-spacing: 0;
+    }
+
+    label {
+      display: block;
+      margin: 14px 0 6px;
+      color: #344054;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    input[type="text"],
+    input[type="url"],
+    input[type="file"] {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 9px 10px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      font-size: 14px;
+    }
+
+    input:focus {
+      outline: 3px solid rgb(17 122 101 / 16%);
+      border-color: var(--accent);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .check {
+      display: flex;
+      gap: 9px;
+      align-items: center;
+      margin-top: 14px;
+      color: #344054;
+      font-size: 14px;
+      font-weight: 560;
+    }
+
+    .check input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      min-height: 42px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      padding: 9px 13px;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button.primary:hover {
+      background: var(--accent-strong);
+    }
+
+    button.secondary {
+      background: #fff;
+      color: #344054;
+      border-color: var(--line);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .meter {
+      height: 10px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      overflow: hidden;
+      margin: 16px 0 10px;
+    }
+
+    .bar {
+      width: 0%;
+      height: 100%;
+      background: var(--accent);
+      transition: width 160ms ease;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fbfcfd;
+    }
+
+    .step strong {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 4px;
+    }
+
+    .step span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .step.ok {
+      border-color: rgb(6 118 71 / 30%);
+      background: rgb(6 118 71 / 6%);
+    }
+
+    .step.fail {
+      border-color: rgb(180 35 24 / 32%);
+      background: rgb(180 35 24 / 6%);
+    }
+
+    pre {
+      min-height: 360px;
+      max-height: 580px;
+      margin: 0;
+      overflow: auto;
+      border-radius: 8px;
+      background: var(--code);
+      color: #eef4ff;
+      padding: 14px;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .log-line {
+      margin: 0 0 8px;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+      margin: 8px 0 0;
+    }
+
+    .error-text {
+      color: var(--error);
+    }
+
+    @media (max-width: 860px) {
+      main {
+        width: min(100vw - 20px, 680px);
+        margin: 18px auto;
+      }
+
+      header,
+      .layout,
+      .row,
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+
+      header {
+        display: block;
+      }
+
+      .origin {
+        margin-top: 12px;
+        white-space: normal;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>BIMFree Upload Test</h1>
+        <p class="subtitle">Request a presigned URL, upload a file to MinIO, and optionally call transform completion.</p>
+      </div>
+      <div class="origin" id="originBadge">origin: -</div>
+    </header>
+
+    <div class="layout">
+      <section class="panel">
+        <h2>Upload</h2>
+
+        <label for="apiBase">API base</label>
+        <input id="apiBase" type="url" autocomplete="off">
+
+        <label for="fileInput">File</label>
+        <input id="fileInput" type="file">
+
+        <div class="row">
+          <div>
+            <label for="filename">Filename</label>
+            <input id="filename" type="text" autocomplete="off" placeholder="scan.zip">
+          </div>
+          <div>
+            <label for="contentType">Content type</label>
+            <input id="contentType" type="text" autocomplete="off" placeholder="application/octet-stream">
+          </div>
+        </div>
+
+        <label for="buildingId">Building ID</label>
+        <input id="buildingId" type="text" autocomplete="off" placeholder="optional UUID">
+
+        <label class="check">
+          <input id="completeAfterUpload" type="checkbox">
+          Call complete_upload after MinIO upload
+        </label>
+        <p class="muted">Leave this off when the model server is not ready.</p>
+
+        <div class="actions">
+          <button id="uploadButton" class="primary" type="button">Start Upload</button>
+          <button id="resetButton" class="secondary" type="button">Reset</button>
+        </div>
+
+        <div class="meter" aria-label="Upload progress">
+          <div class="bar" id="progressBar"></div>
+        </div>
+        <p class="muted" id="progressText">0%</p>
+
+        <div class="status-grid">
+          <div class="step" id="stepRequest">
+            <strong>Presign</strong>
+            <span>Waiting</span>
+          </div>
+          <div class="step" id="stepPut">
+            <strong>MinIO PUT</strong>
+            <span>Waiting</span>
+          </div>
+          <div class="step" id="stepComplete">
+            <strong>Complete</strong>
+            <span>Optional</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Result</h2>
+        <pre id="output"></pre>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const els = {
+      apiBase: document.querySelector("#apiBase"),
+      fileInput: document.querySelector("#fileInput"),
+      filename: document.querySelector("#filename"),
+      contentType: document.querySelector("#contentType"),
+      buildingId: document.querySelector("#buildingId"),
+      completeAfterUpload: document.querySelector("#completeAfterUpload"),
+      uploadButton: document.querySelector("#uploadButton"),
+      resetButton: document.querySelector("#resetButton"),
+      progressBar: document.querySelector("#progressBar"),
+      progressText: document.querySelector("#progressText"),
+      output: document.querySelector("#output"),
+      originBadge: document.querySelector("#originBadge"),
+      stepRequest: document.querySelector("#stepRequest"),
+      stepPut: document.querySelector("#stepPut"),
+      stepComplete: document.querySelector("#stepComplete")
+    };
+
+    const state = {
+      startedAt: null
+    };
+
+    function defaultApiBase() {
+      if (window.location.protocol === "file:") {
+        return "https://bimfree-backend.duckdns.org";
+      }
+      return window.location.origin;
+    }
+
+    function setStep(el, text, mode) {
+      el.classList.remove("ok", "fail");
+      if (mode) {
+        el.classList.add(mode);
+      }
+      el.querySelector("span").textContent = text;
+    }
+
+    function setProgress(percent) {
+      const safe = Math.max(0, Math.min(100, Math.round(percent)));
+      els.progressBar.style.width = safe + "%";
+      els.progressText.textContent = safe + "%";
+    }
+
+    function log(message, data) {
+      const time = new Date().toLocaleTimeString();
+      const suffix = data === undefined ? "" : "\n" + JSON.stringify(data, null, 2);
+      els.output.textContent += `[${time}] ${message}${suffix}\n\n`;
+      els.output.scrollTop = els.output.scrollHeight;
+    }
+
+    function resetOutput() {
+      state.startedAt = null;
+      els.output.textContent = "";
+      setProgress(0);
+      setStep(els.stepRequest, "Waiting");
+      setStep(els.stepPut, "Waiting");
+      setStep(els.stepComplete, "Optional");
+    }
+
+    function normalizeBase(value) {
+      return value.trim().replace(/\/+$/, "");
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: payload === undefined ? undefined : JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      let body = null;
+      if (text) {
+        try {
+          body = JSON.parse(text);
+        } catch {
+          body = text;
+        }
+      }
+
+      if (!response.ok) {
+        const detail = body && body.detail ? body.detail : response.statusText;
+        throw new Error(`${response.status} ${detail}`);
+      }
+
+      return body;
+    }
+
+    function putFile(url, file, headers) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", url);
+
+        Object.entries(headers || {}).forEach(([key, value]) => {
+          xhr.setRequestHeader(key, value);
+        });
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            setProgress((event.loaded / event.total) * 100);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setProgress(100);
+            resolve({
+              status: xhr.status,
+              statusText: xhr.statusText,
+              etag: xhr.getResponseHeader("ETag")
+            });
+          } else {
+            reject(new Error(`${xhr.status} ${xhr.statusText || "Upload failed"}`));
+          }
+        };
+
+        xhr.onerror = () => reject(new Error("Network error during MinIO upload"));
+        xhr.ontimeout = () => reject(new Error("MinIO upload timed out"));
+        xhr.timeout = 10 * 60 * 1000;
+        xhr.send(file);
+      });
+    }
+
+    async function startUpload() {
+      const file = els.fileInput.files[0];
+      if (!file) {
+        log("Choose a file first.");
+        return;
+      }
+
+      resetOutput();
+      state.startedAt = Date.now();
+      els.uploadButton.disabled = true;
+
+      const apiBase = normalizeBase(els.apiBase.value);
+      const filename = els.filename.value.trim() || file.name;
+      const contentType = els.contentType.value.trim() || file.type || "application/octet-stream";
+      const buildingId = els.buildingId.value.trim();
+
+      try {
+        setStep(els.stepRequest, "Running");
+        log("Requesting upload URL...");
+
+        const payload = {
+          filename,
+          content_type: contentType,
+          building_id: buildingId || null
+        };
+
+        const upload = await postJson(`${apiBase}/data_transform/upload`, payload);
+        setStep(els.stepRequest, "Done", "ok");
+        log("Upload URL issued.", upload);
+
+        setStep(els.stepPut, "Uploading");
+        log("Uploading to MinIO...");
+
+        const putResult = await putFile(upload.upload_url, file, upload.headers);
+        setStep(els.stepPut, "Done", "ok");
+        log("MinIO upload completed.", putResult);
+
+        if (els.completeAfterUpload.checked) {
+          setStep(els.stepComplete, "Running");
+          log("Calling complete_upload...");
+          const completed = await postJson(`${apiBase}/data_transform/${upload.task_id}/complete_upload`);
+          setStep(els.stepComplete, "Done", "ok");
+          log("Transform completed.", completed);
+        } else {
+          setStep(els.stepComplete, "Skipped");
+        }
+
+        const elapsed = ((Date.now() - state.startedAt) / 1000).toFixed(1);
+        log(`Finished in ${elapsed}s.`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!els.stepRequest.classList.contains("ok")) {
+          setStep(els.stepRequest, "Failed", "fail");
+        } else if (!els.stepPut.classList.contains("ok")) {
+          setStep(els.stepPut, "Failed", "fail");
+        } else {
+          setStep(els.stepComplete, "Failed", "fail");
+        }
+        log("Failed.", { error: message });
+      } finally {
+        els.uploadButton.disabled = false;
+      }
+    }
+
+    function syncFileFields() {
+      const file = els.fileInput.files[0];
+      if (!file) {
+        return;
+      }
+      els.filename.value = file.name;
+      els.contentType.value = file.type || "application/octet-stream";
+    }
+
+    els.apiBase.value = defaultApiBase();
+    els.originBadge.textContent = `origin: ${window.location.origin || "file"}`;
+    els.fileInput.addEventListener("change", syncFileFields);
+    els.uploadButton.addEventListener("click", startUpload);
+    els.resetButton.addEventListener("click", resetOutput);
+    resetOutput();
+  </script>
+</body>
+</html>

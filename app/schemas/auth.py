@@ -1,30 +1,64 @@
-from pydantic import BaseModel, Field
+from datetime import datetime
+from uuid import UUID
 
-from app.schemas.user import UserResponse
+from pydantic import BaseModel, Field, field_validator
 
 
 class SignupRequest(BaseModel):
-    email: str = Field(..., examples=["user@example.com"])
-    password: str = Field(..., min_length=4, examples=["password123"])
-    name: str | None = Field(default=None, examples=["홍길동"])
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., min_length=6, max_length=128)
+    name: str | None = Field(default=None, max_length=100)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        local_part, separator, domain = email.partition("@")
+
+        if not local_part or separator != "@" or "." not in domain:
+            raise ValueError("valid email is required")
+
+        return email
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        name = value.strip()
+        return name or None
 
 
 class LoginRequest(BaseModel):
-    email: str = Field(..., examples=["user@example.com"])
-    password: str = Field(..., examples=["password123"])
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., min_length=6, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        email = value.strip().lower()
+        local_part, separator, domain = email.partition("@")
+
+        if not local_part or separator != "@" or "." not in domain:
+            raise ValueError("valid email is required")
+
+        return email
 
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: UserResponse
+class UserResponse(BaseModel):
+    id: UUID
+    email: str
+    name: str | None
+    role: str
+    created_at: datetime
 
 
 class SignupResponse(BaseModel):
-    message: str = "Signup success"
+    message: str
+    user: UserResponse
+
+
+class LoginResponse(BaseModel):
+    message: str
     user: UserResponse

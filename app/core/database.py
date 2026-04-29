@@ -22,7 +22,7 @@ class Database:
         """
         if self.pool is None:
             self.pool = await asyncpg.create_pool(
-                dsn=self.database_url,
+                dsn=self._asyncpg_dsn(),
                 min_size=1,
                 max_size=10,
             )
@@ -39,6 +39,12 @@ class Database:
         if self.pool is None:
             raise RuntimeError("Database pool is not initialized. Call connect() first.")
         return self.pool
+
+    def _asyncpg_dsn(self) -> str:
+        if self.database_url.startswith("postgresql+asyncpg://"):
+            return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+        return self.database_url
 
     async def execute(self, query: str, *args: Any) -> str:
         """

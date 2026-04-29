@@ -1,76 +1,46 @@
+import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import router as auth_router
+from app.api.data_transform import router as data_transform_router
+from app.api.dev import (
+    upload_test_router as dev_upload_test_router,
+    users_router as dev_users_router,
+)
 from app.core.database import db
 
 
+load_dotenv()
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    FastAPI 서버 시작/종료 시 실행되는 lifecycle 함수.
-
-    서버 시작:
-    - PostgreSQL connection pool 생성
-    - 개발용 DDL 실행
-
-    서버 종료:
-    - PostgreSQL connection pool 종료
-    """
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.connect()
     await db.init_schema()
 
-    yield
-
-    await db.disconnect()
+    try:
+        yield
+    finally:
+        await db.disconnect()
 
 
 app = FastAPI(
-    title="Fire Digital Twin Backend",
-    description="Digital Twin based Facility Management and Fire Response Platform API",
-    version="0.1.0",
+    title=os.getenv("APP_NAME", "BIMFree Backend"),
     lifespan=lifespan,
 )
 
+app.include_router(auth_router)
+app.include_router(data_transform_router)
 
-# Frontend 연동을 위한 CORS 설정
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# dev 전용, 해당 기능 개발 완료 시 삭제
+app.include_router(dev_upload_test_router)
+app.include_router(dev_users_router)
 
 
-@app.get("/")
-async def root():
-    return {
-        "message": "Fire Digital Twin Backend is running"
-    }
-
-
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "ok"
-    }
-
-
-@app.get("/db-test")
-async def db_test():
-    result = await db.fetch_one(
-        """
-        SELECT NOW() AS current_time;
-        """
-    )
-
-    return {
-        "status": "db connected",
-        "result": result,
-    }
+@app.get("/health", tags=["health"])
+async def health_check() -> dict[str, str]:
+    return {"status": "ok"}
