@@ -73,3 +73,5 @@ checkpoints/
 .cache/
 tmp/
 temp/
+
+.backend.pid
