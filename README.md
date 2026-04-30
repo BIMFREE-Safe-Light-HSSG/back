@@ -44,6 +44,16 @@ docker-compose.yml
 .env.example
 ```
 
+## Architecture Diagram
+
+### 1. System Diagram
+
+![system](img/system.png)
+
+### 2. Upload-Transform Diagram
+
+![upload-transform](img/upload_transform.png)
+
 ## Getting Started
 
 1. PostgreSQL, MinIO, Caddy 실행(docker compose 실행)
