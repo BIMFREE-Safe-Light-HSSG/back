@@ -21,7 +21,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
       MINIO_SERVER_URL: https://${MINIO_PUBLIC_DOMAIN:-bimfree-minio.duckdns.org}
-      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_ORIGIN:-https://bimfree-backend.duckdns.org}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env to your frontend origin}
     ports:
       - "9001:9001"
     expose:
@@ -39,7 +39,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-scan-files}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://bimfree-backend.duckdns.org}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env to your frontend origin}
     entrypoint: /bin/sh
     command:
       - -c
@@ -62,7 +62,7 @@ services:
     environment:
       API_PUBLIC_DOMAIN: ${API_PUBLIC_DOMAIN:-bimfree-backend.duckdns.org}
       MINIO_PUBLIC_DOMAIN: ${MINIO_PUBLIC_DOMAIN:-bimfree-minio.duckdns.org}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://bimfree-backend.duckdns.org}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env to your frontend origin}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
