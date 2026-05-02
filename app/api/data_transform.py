@@ -1,7 +1,8 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.dependencies import get_current_user
 from app.schemas.data_transform import (
     CompleteUploadResponse,
     UploadRequest,
@@ -18,7 +19,11 @@ from app.services.data_transform_service import (
 )
 
 
-router = APIRouter(prefix="/data_transform", tags=["data_transform"])
+router = APIRouter(
+    prefix="/data_transform",
+    tags=["data_transform"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.post(

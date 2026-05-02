@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.api.dependencies import get_current_user
 from app.core.database import db
 from app.schemas.auth import UserResponse
 
 
-router = APIRouter(prefix="/dev", tags=["dev"])
+router = APIRouter(
+    prefix="/dev",
+    tags=["dev"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 @router.get("/users", response_model=list[UserResponse])

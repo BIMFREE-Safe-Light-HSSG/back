@@ -297,6 +297,9 @@
         <label for="apiBase">API base</label>
         <input id="apiBase" type="url" autocomplete="off">
 
+        <label for="accessToken">Access token</label>
+        <input id="accessToken" type="text" autocomplete="off" placeholder="Bearer token from /auth/login">
+
         <label for="fileInput">File</label>
         <input id="fileInput" type="file">
 
@@ -356,6 +359,7 @@
   <script>
     const els = {
       apiBase: document.querySelector("#apiBase"),
+      accessToken: document.querySelector("#accessToken"),
       fileInput: document.querySelector("#fileInput"),
       filename: document.querySelector("#filename"),
       contentType: document.querySelector("#contentType"),
@@ -417,12 +421,17 @@
       return value.trim().replace(/\/+$/, "");
     }
 
-    async function postJson(url, payload) {
+    async function postJson(url, payload, accessToken) {
+      const headers = {
+        "Content-Type": "application/json"
+      };
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+
       const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
+        headers,
         body: payload === undefined ? undefined : JSON.stringify(payload)
       });
 
@@ -494,6 +503,7 @@
       const filename = els.filename.value.trim() || file.name;
       const contentType = els.contentType.value.trim() || file.type || "application/octet-stream";
       const buildingId = els.buildingId.value.trim();
+      const accessToken = els.accessToken.value.trim().replace(/^Bearer\s+/i, "");
 
       try {
         setStep(els.stepRequest, "Running");
@@ -505,7 +515,7 @@
           building_id: buildingId || null
         };
 
-        const upload = await postJson(`${apiBase}/data_transform/upload`, payload);
+        const upload = await postJson(`${apiBase}/data_transform/upload`, payload, accessToken);
         setStep(els.stepRequest, "Done", "ok");
         log("Upload URL issued.", upload);
 
@@ -519,7 +529,11 @@
         if (els.completeAfterUpload.checked) {
           setStep(els.stepComplete, "Running");
           log("Calling complete_upload...");
-          const completed = await postJson(`${apiBase}/data_transform/${upload.task_id}/complete_upload`);
+          const completed = await postJson(
+            `${apiBase}/data_transform/${upload.task_id}/complete_upload`,
+            undefined,
+            accessToken
+          );
           setStep(els.stepComplete, "Done", "ok");
           log("Transform completed.", completed);
         } else {
