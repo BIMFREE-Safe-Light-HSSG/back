@@ -102,9 +102,18 @@ Content-Type: application/json
 {
   "email": "user@example.com",
   "password": "password123",
-  "name": "User"
+  "name": "User",
+  "job": "FACILITY_MANAGER",
+  "building_location": {
+    "latitude": 37.5665,
+    "longitude": 126.978,
+    "address": "서울특별시 중구 세종대로 110"
+  }
 }
 ```
+
+`job`은 `FACILITY_MANAGER`(시설관리자), `FIREFIGHTER`(소방대원)를 사용한다.
+프론트에서 한글 값 `시설관리자`, `소방대원`으로 보내도 서버에서 같은 값으로 정규화한다.
 
 성공 시 `201 Created`와 사용자 정보를 반환한다. 비밀번호는 `pbkdf2_sha256` 해시로 저장됨.
 
@@ -136,8 +145,15 @@ Content-Type: application/json
     "id": "00000000-0000-0000-0000-000000000000",
     "email": "user@example.com",
     "name": "User",
-    "role": "USER",
-    "created_at": "2026-05-02T00:00:00"
+    "job": "FACILITY_MANAGER",
+    "created_at": "2026-05-02T00:00:00",
+    "building": {
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "서울특별시 중구 세종대로 110",
+      "address": "서울특별시 중구 세종대로 110",
+      "latitude": 37.5665,
+      "longitude": 126.978
+    }
   }
 }
 ```

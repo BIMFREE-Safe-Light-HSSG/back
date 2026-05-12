@@ -36,6 +36,57 @@ class InvalidAccessTokenError(Exception):
     pass
 
 
+USER_PROFILE_SELECT = """
+SELECT
+    u.id,
+    u.email,
+    u.password_hash,
+    u.name,
+    u.job,
+    u.created_at,
+    b.id AS building_id,
+    b.name AS building_name,
+    b.address AS building_address,
+    b.latitude AS building_latitude,
+    b.longitude AS building_longitude
+FROM users u
+LEFT JOIN LATERAL (
+    SELECT id, name, address, latitude, longitude
+    FROM buildings
+    WHERE owner_id = u.id
+    ORDER BY created_at DESC
+    LIMIT 1
+) b ON TRUE
+"""
+
+
+def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    user = {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "job": row.get("job"),
+        "created_at": row["created_at"],
+    }
+
+    if (
+        row.get("building_id") is not None
+        and row.get("building_latitude") is not None
+        and row.get("building_longitude") is not None
+    ):
+        user["building"] = {
+            "id": row["building_id"],
+            "name": row["building_name"],
+            "address": row["building_address"],
+            "latitude": row["building_latitude"],
+            "longitude": row["building_longitude"],
+        }
+    else:
+        user["building"] = None
+
+    return user
+
+
 def _access_token_expire_minutes() -> int:
     raw_minutes = os.getenv(
         "ACCESS_TOKEN_EXPIRE_MINUTES",
@@ -67,7 +118,6 @@ def create_access_token(user: dict[str, Any]) -> str:
     payload = {
         "sub": str(user["id"]),
         "email": user["email"],
-        "role": user["role"],
         "iat": int(now.timestamp()),
         "exp": int(expires_at.timestamp()),
     }
@@ -96,17 +146,16 @@ async def get_user_from_access_token(token: str) -> dict[str, Any]:
         raise InvalidAccessTokenError from exc
 
     user = await db.fetch_one(
-        """
-        SELECT id, email, name, role, created_at
-        FROM users
-        WHERE id = $1
+        f"""
+        {USER_PROFILE_SELECT}
+        WHERE u.id = $1
         """,
         user_id,
     )
     if user is None:
         raise InvalidAccessTokenError
 
-    return user
+    return _user_profile_from_row(user)
 
 
 def hash_password(password: str) -> str:
@@ -147,33 +196,60 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
         raise EmailAlreadyExistsError
 
     password_hash = hash_password(payload.password)
+    building_name = payload.building_location.address or "Registered building"
 
-    try:
-        user = await db.fetch_one(
-            """
-            INSERT INTO users (email, password_hash, name)
-            VALUES ($1, $2, $3)
-            RETURNING id, email, name, role, created_at
-            """,
-            payload.email,
-            password_hash,
-            payload.name,
-        )
-    except asyncpg.UniqueViolationError as exc:
-        raise EmailAlreadyExistsError from exc
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            try:
+                user = await conn.fetchrow(
+                    """
+                    INSERT INTO users (email, password_hash, name, job)
+                    VALUES ($1, $2, $3, $4)
+                    RETURNING id
+                    """,
+                    payload.email,
+                    password_hash,
+                    payload.name,
+                    payload.job.value,
+                )
+            except asyncpg.UniqueViolationError as exc:
+                raise EmailAlreadyExistsError from exc
 
-    if user is None:
-        raise RuntimeError("Failed to create user.")
+            if user is None:
+                raise RuntimeError("Failed to create user.")
 
-    return user
+            await conn.fetchrow(
+                """
+                INSERT INTO buildings (owner_id, name, address, latitude, longitude)
+                VALUES ($1, $2, $3, $4, $5)
+                RETURNING id
+                """,
+                user["id"],
+                building_name,
+                payload.building_location.address,
+                payload.building_location.latitude,
+                payload.building_location.longitude,
+            )
+
+            profile = await conn.fetchrow(
+                f"""
+                {USER_PROFILE_SELECT}
+                WHERE u.id = $1
+                """,
+                user["id"],
+            )
+
+    if profile is None:
+        raise RuntimeError("Failed to load created user.")
+
+    return _user_profile_from_row(dict(profile))
 
 
 async def login(payload: LoginRequest) -> dict[str, Any]:
     user = await db.fetch_one(
-        """
-        SELECT id, email, password_hash, name, role, created_at
-        FROM users
-        WHERE email = $1
+        f"""
+        {USER_PROFILE_SELECT}
+        WHERE u.email = $1
         """,
         payload.email,
     )
@@ -181,7 +257,7 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
     if user is None or not verify_password(payload.password, user["password_hash"]):
         raise InvalidCredentialsError
 
-    user.pop("password_hash", None)
+    user = _user_profile_from_row(user)
     return {
         "access_token": create_access_token(user),
         "token_type": "bearer",

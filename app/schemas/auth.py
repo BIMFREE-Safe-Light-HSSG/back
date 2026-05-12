@@ -1,13 +1,66 @@
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
+
+
+class JobType(StrEnum):
+    FACILITY_MANAGER = "FACILITY_MANAGER"
+    FIREFIGHTER = "FIREFIGHTER"
+
+
+class BuildingLocationRequest(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    address: str | None = Field(default=None, max_length=500)
+
+    @field_validator("address")
+    @classmethod
+    def normalize_address(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        address = value.strip()
+        return address or None
+
+
+class BuildingLocationResponse(BaseModel):
+    id: UUID
+    name: str
+    address: str | None
+    latitude: float
+    longitude: float
 
 
 class SignupRequest(BaseModel):
     email: str = Field(..., max_length=255)
     password: str = Field(..., min_length=6, max_length=128)
     name: str | None = Field(default=None, max_length=100)
+    job: JobType
+    building_location: BuildingLocationRequest
+
+    @field_validator("job", mode="before")
+    @classmethod
+    def normalize_job(cls, value: object) -> JobType:
+        if isinstance(value, JobType):
+            return value
+
+        raw_value = str(value).strip()
+        normalized_value = raw_value.upper().replace("-", "_").replace(" ", "_")
+        job_map = {
+            "FACILITY_MANAGER": JobType.FACILITY_MANAGER,
+            "시설관리자": JobType.FACILITY_MANAGER,
+            "FIREFIGHTER": JobType.FIREFIGHTER,
+            "소방대원": JobType.FIREFIGHTER,
+        }
+
+        if normalized_value in job_map:
+            return job_map[normalized_value]
+        if raw_value in job_map:
+            return job_map[raw_value]
+
+        raise ValueError("job must be FACILITY_MANAGER or FIREFIGHTER")
 
     @field_validator("email")
     @classmethod
@@ -50,8 +103,9 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     name: str | None
-    role: str
+    job: JobType | None = None
     created_at: datetime
+    building: BuildingLocationResponse | None = None
 
 
 class SignupResponse(BaseModel):

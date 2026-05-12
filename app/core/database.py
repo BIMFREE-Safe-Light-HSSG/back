@@ -1,4 +1,6 @@
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import asyncpg
@@ -39,6 +41,13 @@ class Database:
         if self.pool is None:
             raise RuntimeError("Database pool is not initialized. Call connect() first.")
         return self.pool
+
+    @asynccontextmanager
+    async def acquire(self) -> AsyncIterator[asyncpg.Connection]:
+        pool = self._get_pool()
+
+        async with pool.acquire() as conn:
+            yield conn
 
     def _asyncpg_dsn(self) -> str:
         if self.database_url.startswith("postgresql+asyncpg://"):
@@ -102,9 +111,17 @@ class Database:
             email VARCHAR(255) UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             name VARCHAR(100),
-            role VARCHAR(50) DEFAULT 'USER',
+            job VARCHAR(50),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """)
+        await self.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS job VARCHAR(50);
+        """)
+        await self.execute("""
+        ALTER TABLE users
+        DROP COLUMN IF EXISTS role;
         """)
 
         await self.execute("""
@@ -113,9 +130,19 @@ class Database:
             owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
             name VARCHAR(255) NOT NULL,
             address TEXT,
+            latitude DOUBLE PRECISION,
+            longitude DOUBLE PRECISION,
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
         """)
 
         await self.execute("""
