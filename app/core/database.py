@@ -114,6 +114,8 @@ class Database:
             job VARCHAR(50),
             jurisdiction_code VARCHAR(100),
             jurisdiction_name VARCHAR(255),
+            jurisdiction_latitude DOUBLE PRECISION,
+            jurisdiction_longitude DOUBLE PRECISION,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
@@ -131,6 +133,14 @@ class Database:
         """)
         await self.execute("""
         ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS jurisdiction_latitude DOUBLE PRECISION;
+        """)
+        await self.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS jurisdiction_longitude DOUBLE PRECISION;
+        """)
+        await self.execute("""
+        ALTER TABLE users
         DROP COLUMN IF EXISTS role;
         """)
 
@@ -144,6 +154,9 @@ class Database:
             longitude DOUBLE PRECISION,
             district_code VARCHAR(100),
             district_name VARCHAR(255),
+            region_1depth_name VARCHAR(255),
+            region_2depth_name VARCHAR(255),
+            region_3depth_name VARCHAR(255),
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -163,6 +176,18 @@ class Database:
         await self.execute("""
         ALTER TABLE buildings
         ADD COLUMN IF NOT EXISTS district_name VARCHAR(255);
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS region_1depth_name VARCHAR(255);
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS region_2depth_name VARCHAR(255);
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS region_3depth_name VARCHAR(255);
         """)
 
         await self.execute("""

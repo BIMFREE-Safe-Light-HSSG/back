@@ -13,6 +13,9 @@ class ViewerBuildingResponse(BaseModel):
     longitude: float | None
     district_code: str | None
     district_name: str | None
+    region_1depth_name: str | None
+    region_2depth_name: str | None
+    region_3depth_name: str | None
     has_scene_graph: bool
     latest_graph_created_at: datetime | None
 

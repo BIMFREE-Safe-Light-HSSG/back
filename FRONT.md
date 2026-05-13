@@ -22,6 +22,16 @@ http://127.0.0.1:8000
 Authorization: Bearer <access_token>
 ```
 
+## Kakao Map 사용
+
+회원가입의 건물 선택/관할 지구 선택 지도는 Kakao Maps JavaScript SDK 사용을 권장한다.
+
+프론트에는 Kakao JavaScript 키를 사용한다. 이 키는 브라우저에 노출될 수 있으므로 Kakao Developers에서 웹 플랫폼 도메인 제한을 반드시 설정한다.
+
+백엔드는 Kakao REST API 키를 `.env`의 `KAKAO_REST_API_KEY`로 사용한다. REST API 키는 프론트에 노출하지 않는다.
+
+Kakao Maps API는 무료 제공 쿼터가 있다. 공식 문서 기준으로 Map JavaScript SDK는 일 300,000건, Local API의 좌표->행정구역/주소 변환은 각각 일 100,000건 무료 제공 쿼터가 있으며, 유료 API를 적용하면 초과 사용분 과금이 가능하다. 따라서 "무조건 완전 무료"라기보다는 "무료 쿼터 안에서는 무료"로 이해하면 된다.
+
 ## 직업 값
 
 서버 표준 값:
@@ -47,7 +57,7 @@ Content-Type: application/json
 
 ### 시설관리자 회원가입
 
-시설관리자는 가입 시 입력한 건물이 본인 소유 건물로 등록된다. 뷰어에서는 이 건물만 조회된다.
+시설관리자는 Kakao 지도에서 자신의 건물 위치를 선택한다. 가입 시 입력한 좌표는 서버에서 Kakao Local API로 다시 검증되고, 그 결과가 본인 소유 건물로 등록된다.
 
 ```json
 {
@@ -55,8 +65,7 @@ Content-Type: application/json
   "job": "FACILITY_MANAGER",
   "building_location": {
     "latitude": 37.5665,
-    "longitude": 126.978,
-    "address": "서울특별시 중구 세종대로 110"
+    "longitude": 126.978
   },
   "email": "manager@example.com",
   "password": "password123"
@@ -65,27 +74,35 @@ Content-Type: application/json
 
 ### 소방대원 회원가입
 
-소방대원은 `jurisdiction`이 필수다. 뷰어에서는 `jurisdiction.code` 또는 `jurisdiction.name`과 같은 관할 지구의 건물들이 조회된다.
+소방대원은 Kakao 지도에서 자신의 관할 지구 안의 한 지점을 선택한다. 서버는 이 좌표를 행정구역으로 변환해서 관할 지구로 저장한다. 뷰어에서는 같은 관할 지구의 건물들이 조회된다.
 
 ```json
 {
   "name": "김소방",
   "job": "FIREFIGHTER",
   "jurisdiction": {
-    "code": "JUNG_GU",
-    "name": "중구"
-  },
-  "building_location": {
     "latitude": 37.5665,
-    "longitude": 126.978,
-    "address": "서울특별시 중구 세종대로 110"
+    "longitude": 126.978
   },
   "email": "firefighter@example.com",
   "password": "password123"
 }
 ```
 
-`building_location`은 현재 가입 폼 공통 입력값이다. 소방대원의 경우 서버가 소유 건물을 만들지는 않고, 관할 지구 정보만 저장한다.
+소방대원은 `building_location`을 보내지 않는다. 관할 구역을 명시적으로 고정해야 하는 운영 화면에서는 아래처럼 `code/name`을 직접 보내도 된다.
+
+```json
+{
+  "name": "김소방",
+  "job": "FIREFIGHTER",
+  "jurisdiction": {
+    "code": "11140",
+    "name": "중구"
+  },
+  "email": "firefighter@example.com",
+  "password": "password123"
+}
+```
 
 ### 회원가입 응답
 
@@ -105,8 +122,11 @@ Content-Type: application/json
       "address": "서울특별시 중구 세종대로 110",
       "latitude": 37.5665,
       "longitude": 126.978,
-      "district_code": "중구",
-      "district_name": "중구"
+      "district_code": "11140",
+      "district_name": "중구",
+      "region_1depth_name": "서울특별시",
+      "region_2depth_name": "중구",
+      "region_3depth_name": "태평로1가"
     }
   }
 }
@@ -148,8 +168,11 @@ Content-Type: application/json
       "address": "서울특별시 중구 세종대로 110",
       "latitude": 37.5665,
       "longitude": 126.978,
-      "district_code": "중구",
-      "district_name": "중구"
+      "district_code": "11140",
+      "district_name": "중구",
+      "region_1depth_name": "서울특별시",
+      "region_2depth_name": "중구",
+      "region_3depth_name": "태평로1가"
     }
   }
 }
@@ -167,6 +190,40 @@ Authorization: Bearer <access_token>
 ```
 
 응답 형태는 로그인 응답 안의 `user` 객체와 같다.
+
+## 지도 좌표 검증
+
+회원가입 화면에서 사용자가 지도 위치를 선택하면, submit 전에 이 API를 호출해서 서버 기준 주소/행정구역을 확인한다.
+
+```http
+GET /geo/reverse-geocode?latitude=37.5665&longitude=126.978
+```
+
+응답:
+
+```json
+{
+  "latitude": 37.5665,
+  "longitude": 126.978,
+  "address": "서울특별시 중구 세종대로 110",
+  "building_name": null,
+  "district_code": "11140",
+  "district_name": "중구",
+  "region_1depth_name": "서울특별시",
+  "region_2depth_name": "중구",
+  "region_3depth_name": "태평로1가",
+  "provider": "KAKAO"
+}
+```
+
+프론트 사용 방식:
+
+```txt
+시설관리자: 선택한 좌표를 건물 위치로 확인하고, 응답의 address/district_name을 화면에 표시
+소방대원: 선택한 좌표를 관할 지구로 확인하고, 응답의 district_name을 화면에 표시
+```
+
+회원가입 submit 시에는 좌표만 보내도 된다. 서버가 다시 Kakao Local API로 검증한 값을 저장한다.
 
 ## 뷰어 진입
 
@@ -188,8 +245,11 @@ Authorization: Bearer <access_token>
       "address": "서울특별시 중구 세종대로 110",
       "latitude": 37.5665,
       "longitude": 126.978,
-      "district_code": "중구",
+      "district_code": "11140",
       "district_name": "중구",
+      "region_1depth_name": "서울특별시",
+      "region_2depth_name": "중구",
+      "region_3depth_name": "태평로1가",
       "has_scene_graph": true,
       "latest_graph_created_at": "2026-05-13T00:00:00"
     }
@@ -231,8 +291,11 @@ Authorization: Bearer <access_token>
     "address": "서울특별시 중구 세종대로 110",
     "latitude": 37.5665,
     "longitude": 126.978,
-    "district_code": "중구",
+    "district_code": "11140",
     "district_name": "중구",
+    "region_1depth_name": "서울특별시",
+    "region_2depth_name": "중구",
+    "region_3depth_name": "태평로1가",
     "has_scene_graph": true,
     "latest_graph_created_at": "2026-05-13T00:00:00"
   }
@@ -403,8 +466,10 @@ failed: 업로드 또는 변환 실패
 ## 추천 화면 플로우
 
 1. 회원가입 페이지
-   - 공통 입력: 이름, 직업, 지도 위치, 이메일, 패스워드
-   - 직업이 소방대원이면 관할 지구 선택/입력 UI를 추가로 노출
+   - 공통 입력: 이름, 직업, 이메일, 패스워드
+   - 시설관리자: Kakao 지도에서 건물 위치 선택
+   - 소방대원: Kakao 지도에서 관할 지구 선택
+   - 좌표 선택 후 `/geo/reverse-geocode`로 주소/행정구역 확인
 2. 로그인 페이지
    - 로그인 성공 시 `access_token` 저장
 3. 뷰어 페이지

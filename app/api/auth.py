@@ -17,6 +17,11 @@ from app.services.auth_service import (
     login,
     signup,
 )
+from app.services.geo_service import (
+    GeoConfigurationError,
+    GeoNoResultError,
+    GeoProviderError,
+)
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -34,6 +39,21 @@ async def signup_user(payload: SignupRequest) -> SignupResponse:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email is already registered.",
+        ) from exc
+    except (AuthConfigurationError, GeoConfigurationError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except GeoProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    except GeoNoResultError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
         ) from exc
 
     return SignupResponse(

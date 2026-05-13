@@ -48,6 +48,9 @@ async def list_viewer_buildings(current_user: dict[str, Any]) -> list[dict[str, 
                 b.longitude,
                 b.district_code,
                 b.district_name,
+                b.region_1depth_name,
+                b.region_2depth_name,
+                b.region_3depth_name,
                 gd.id IS NOT NULL AS has_scene_graph,
                 gd.created_at AS latest_graph_created_at
             FROM buildings b
@@ -78,6 +81,9 @@ async def list_viewer_buildings(current_user: dict[str, Any]) -> list[dict[str, 
                 b.longitude,
                 b.district_code,
                 b.district_name,
+                b.region_1depth_name,
+                b.region_2depth_name,
+                b.region_3depth_name,
                 gd.id IS NOT NULL AS has_scene_graph,
                 gd.created_at AS latest_graph_created_at
             FROM buildings b

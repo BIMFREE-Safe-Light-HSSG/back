@@ -27,7 +27,21 @@ class BuildingLocationRequest(BaseModel):
 
 class JurisdictionRequest(BaseModel):
     code: str | None = Field(default=None, max_length=100)
-    name: str = Field(..., min_length=1, max_length=255)
+    name: str | None = Field(default=None, max_length=255)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def validate_jurisdiction_source(self) -> "JurisdictionRequest":
+        has_coordinates = self.latitude is not None and self.longitude is not None
+        has_text = self.code is not None or self.name is not None
+
+        if not has_coordinates and not has_text:
+            raise ValueError("jurisdiction requires coordinates or code/name")
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("jurisdiction latitude and longitude must be sent together")
+
+        return self
 
     @field_validator("code")
     @classmethod
@@ -40,17 +54,19 @@ class JurisdictionRequest(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def normalize_name(cls, value: str) -> str:
-        name = value.strip()
-        if not name:
-            raise ValueError("jurisdiction name is required")
+    def normalize_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
 
-        return name
+        name = value.strip()
+        return name or None
 
 
 class JurisdictionResponse(BaseModel):
     code: str | None
     name: str | None
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 class BuildingLocationResponse(BaseModel):
@@ -61,6 +77,9 @@ class BuildingLocationResponse(BaseModel):
     longitude: float
     district_code: str | None = None
     district_name: str | None = None
+    region_1depth_name: str | None = None
+    region_2depth_name: str | None = None
+    region_3depth_name: str | None = None
 
 
 class SignupRequest(BaseModel):
@@ -68,11 +87,13 @@ class SignupRequest(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
     name: str | None = Field(default=None, max_length=100)
     job: JobType
-    building_location: BuildingLocationRequest
+    building_location: BuildingLocationRequest | None = None
     jurisdiction: JurisdictionRequest | None = None
 
     @model_validator(mode="after")
     def validate_job_fields(self) -> "SignupRequest":
+        if self.job == JobType.FACILITY_MANAGER and self.building_location is None:
+            raise ValueError("building_location is required for facility managers")
         if self.job == JobType.FIREFIGHTER and self.jurisdiction is None:
             raise ValueError("jurisdiction is required for firefighters")
 

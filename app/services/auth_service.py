@@ -1,7 +1,6 @@
 import hashlib
 import hmac
 import os
-import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -11,7 +10,12 @@ import asyncpg
 from jose import JWTError, jwt
 
 from app.core.database import db
-from app.schemas.auth import LoginRequest, SignupRequest
+from app.schemas.auth import JobType, LoginRequest, SignupRequest
+from app.services.geo_service import (
+    GeoConfigurationError,
+    fallback_location_from_address,
+    reverse_geocode,
+)
 
 
 HASH_ALGORITHM = "pbkdf2_sha256"
@@ -46,6 +50,8 @@ SELECT
     u.job,
     u.jurisdiction_code,
     u.jurisdiction_name,
+    u.jurisdiction_latitude,
+    u.jurisdiction_longitude,
     u.created_at,
     b.id AS building_id,
     b.name AS building_name,
@@ -53,10 +59,23 @@ SELECT
     b.latitude AS building_latitude,
     b.longitude AS building_longitude,
     b.district_code AS building_district_code,
-    b.district_name AS building_district_name
+    b.district_name AS building_district_name,
+    b.region_1depth_name AS building_region_1depth_name,
+    b.region_2depth_name AS building_region_2depth_name,
+    b.region_3depth_name AS building_region_3depth_name
 FROM users u
 LEFT JOIN LATERAL (
-    SELECT id, name, address, latitude, longitude, district_code, district_name
+    SELECT
+        id,
+        name,
+        address,
+        latitude,
+        longitude,
+        district_code,
+        district_name,
+        region_1depth_name,
+        region_2depth_name,
+        region_3depth_name
     FROM buildings
     WHERE owner_id = u.id
     ORDER BY created_at DESC
@@ -77,6 +96,8 @@ def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
         user["jurisdiction"] = {
             "code": row.get("jurisdiction_code"),
             "name": row.get("jurisdiction_name"),
+            "latitude": row.get("jurisdiction_latitude"),
+            "longitude": row.get("jurisdiction_longitude"),
         }
     else:
         user["jurisdiction"] = None
@@ -94,6 +115,9 @@ def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
             "longitude": row["building_longitude"],
             "district_code": row["building_district_code"],
             "district_name": row["building_district_name"],
+            "region_1depth_name": row["building_region_1depth_name"],
+            "region_2depth_name": row["building_region_2depth_name"],
+            "region_3depth_name": row["building_region_3depth_name"],
         }
     else:
         user["building"] = None
@@ -101,41 +125,50 @@ def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
     return user
 
 
-def _normalize_area_code(value: str) -> str:
-    return re.sub(r"[\s-]+", "_", value.strip()).upper()
+async def _resolve_building_location(payload: SignupRequest) -> dict[str, Any]:
+    if payload.building_location is None:
+        raise RuntimeError("building_location is required.")
+
+    try:
+        location = await reverse_geocode(
+            payload.building_location.latitude,
+            payload.building_location.longitude,
+        )
+    except GeoConfigurationError:
+        if not payload.building_location.address:
+            raise
+
+        return fallback_location_from_address(
+            payload.building_location.latitude,
+            payload.building_location.longitude,
+            payload.building_location.address,
+        )
+
+    if location["address"] is None and payload.building_location.address:
+        location["address"] = payload.building_location.address
+
+    return location
 
 
-def _district_name_from_address(address: str | None) -> str | None:
-    if not address:
-        return None
+async def _resolve_jurisdiction(payload: SignupRequest) -> dict[str, Any]:
+    if payload.jurisdiction is None:
+        raise RuntimeError("jurisdiction is required.")
 
-    for suffix in ("구", "군"):
-        match = re.search(rf"([가-힣A-Za-z0-9]+{suffix})", address)
-        if match:
-            return match.group(1)
+    if payload.jurisdiction.latitude is not None and payload.jurisdiction.longitude is not None:
+        return await reverse_geocode(
+            payload.jurisdiction.latitude,
+            payload.jurisdiction.longitude,
+        )
 
-    match = re.search(r"([가-힣A-Za-z0-9]+시)", address)
-    if match:
-        return match.group(1)
+    if not payload.jurisdiction.name:
+        raise RuntimeError("jurisdiction name is required when coordinates are omitted.")
 
-    tokens = address.split()
-    return tokens[0] if tokens else None
-
-
-def _district_from_signup(payload: SignupRequest) -> tuple[str, str]:
-    if payload.jurisdiction is not None:
-        district_name = payload.jurisdiction.name
-        district_code = payload.jurisdiction.code or district_name
-        return _normalize_area_code(district_code), district_name
-
-    district_name = _district_name_from_address(payload.building_location.address)
-    if district_name:
-        return _normalize_area_code(district_name), district_name
-
-    latitude = round(payload.building_location.latitude, 4)
-    longitude = round(payload.building_location.longitude, 4)
-    district_name = f"{latitude},{longitude}"
-    return _normalize_area_code(district_name), district_name
+    return {
+        "latitude": None,
+        "longitude": None,
+        "district_code": payload.jurisdiction.code or payload.jurisdiction.name,
+        "district_name": payload.jurisdiction.name,
+    }
 
 
 def _access_token_expire_minutes() -> int:
@@ -247,10 +280,17 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
         raise EmailAlreadyExistsError
 
     password_hash = hash_password(payload.password)
-    building_name = payload.building_location.address or "Registered building"
-    district_code, district_name = _district_from_signup(payload)
-    jurisdiction_code = district_code if payload.job.value == "FIREFIGHTER" else None
-    jurisdiction_name = district_name if payload.job.value == "FIREFIGHTER" else None
+    building_location = None
+    jurisdiction = None
+    if payload.job == JobType.FACILITY_MANAGER:
+        building_location = await _resolve_building_location(payload)
+    if payload.job == JobType.FIREFIGHTER:
+        jurisdiction = await _resolve_jurisdiction(payload)
+
+    jurisdiction_code = jurisdiction["district_code"] if jurisdiction else None
+    jurisdiction_name = jurisdiction["district_name"] if jurisdiction else None
+    jurisdiction_latitude = jurisdiction["latitude"] if jurisdiction else None
+    jurisdiction_longitude = jurisdiction["longitude"] if jurisdiction else None
 
     async with db.acquire() as conn:
         async with conn.transaction():
@@ -263,9 +303,11 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
                         name,
                         job,
                         jurisdiction_code,
-                        jurisdiction_name
+                        jurisdiction_name,
+                        jurisdiction_latitude,
+                        jurisdiction_longitude
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     RETURNING id
                     """,
                     payload.email,
@@ -274,6 +316,8 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
                     payload.job.value,
                     jurisdiction_code,
                     jurisdiction_name,
+                    jurisdiction_latitude,
+                    jurisdiction_longitude,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise EmailAlreadyExistsError from exc
@@ -281,7 +325,12 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
             if user is None:
                 raise RuntimeError("Failed to create user.")
 
-            if payload.job.value == "FACILITY_MANAGER":
+            if payload.job == JobType.FACILITY_MANAGER and building_location is not None:
+                building_name = (
+                    building_location["building_name"]
+                    or building_location["address"]
+                    or "Registered building"
+                )
                 await conn.fetchrow(
                     """
                     INSERT INTO buildings (
@@ -291,18 +340,24 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
                         latitude,
                         longitude,
                         district_code,
-                        district_name
+                        district_name,
+                        region_1depth_name,
+                        region_2depth_name,
+                        region_3depth_name
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                     RETURNING id
                     """,
                     user["id"],
                     building_name,
-                    payload.building_location.address,
-                    payload.building_location.latitude,
-                    payload.building_location.longitude,
-                    district_code,
-                    district_name,
+                    building_location["address"],
+                    building_location["latitude"],
+                    building_location["longitude"],
+                    building_location["district_code"],
+                    building_location["district_name"],
+                    building_location["region_1depth_name"],
+                    building_location["region_2depth_name"],
+                    building_location["region_3depth_name"],
                 )
 
             profile = await conn.fetchrow(
