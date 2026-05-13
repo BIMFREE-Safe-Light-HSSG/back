@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import re
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -43,15 +44,19 @@ SELECT
     u.password_hash,
     u.name,
     u.job,
+    u.jurisdiction_code,
+    u.jurisdiction_name,
     u.created_at,
     b.id AS building_id,
     b.name AS building_name,
     b.address AS building_address,
     b.latitude AS building_latitude,
-    b.longitude AS building_longitude
+    b.longitude AS building_longitude,
+    b.district_code AS building_district_code,
+    b.district_name AS building_district_name
 FROM users u
 LEFT JOIN LATERAL (
-    SELECT id, name, address, latitude, longitude
+    SELECT id, name, address, latitude, longitude, district_code, district_name
     FROM buildings
     WHERE owner_id = u.id
     ORDER BY created_at DESC
@@ -68,6 +73,13 @@ def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "job": row.get("job"),
         "created_at": row["created_at"],
     }
+    if row.get("jurisdiction_code") or row.get("jurisdiction_name"):
+        user["jurisdiction"] = {
+            "code": row.get("jurisdiction_code"),
+            "name": row.get("jurisdiction_name"),
+        }
+    else:
+        user["jurisdiction"] = None
 
     if (
         row.get("building_id") is not None
@@ -80,11 +92,50 @@ def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
             "address": row["building_address"],
             "latitude": row["building_latitude"],
             "longitude": row["building_longitude"],
+            "district_code": row["building_district_code"],
+            "district_name": row["building_district_name"],
         }
     else:
         user["building"] = None
 
     return user
+
+
+def _normalize_area_code(value: str) -> str:
+    return re.sub(r"[\s-]+", "_", value.strip()).upper()
+
+
+def _district_name_from_address(address: str | None) -> str | None:
+    if not address:
+        return None
+
+    for suffix in ("구", "군"):
+        match = re.search(rf"([가-힣A-Za-z0-9]+{suffix})", address)
+        if match:
+            return match.group(1)
+
+    match = re.search(r"([가-힣A-Za-z0-9]+시)", address)
+    if match:
+        return match.group(1)
+
+    tokens = address.split()
+    return tokens[0] if tokens else None
+
+
+def _district_from_signup(payload: SignupRequest) -> tuple[str, str]:
+    if payload.jurisdiction is not None:
+        district_name = payload.jurisdiction.name
+        district_code = payload.jurisdiction.code or district_name
+        return _normalize_area_code(district_code), district_name
+
+    district_name = _district_name_from_address(payload.building_location.address)
+    if district_name:
+        return _normalize_area_code(district_name), district_name
+
+    latitude = round(payload.building_location.latitude, 4)
+    longitude = round(payload.building_location.longitude, 4)
+    district_name = f"{latitude},{longitude}"
+    return _normalize_area_code(district_name), district_name
 
 
 def _access_token_expire_minutes() -> int:
@@ -197,20 +248,32 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
 
     password_hash = hash_password(payload.password)
     building_name = payload.building_location.address or "Registered building"
+    district_code, district_name = _district_from_signup(payload)
+    jurisdiction_code = district_code if payload.job.value == "FIREFIGHTER" else None
+    jurisdiction_name = district_name if payload.job.value == "FIREFIGHTER" else None
 
     async with db.acquire() as conn:
         async with conn.transaction():
             try:
                 user = await conn.fetchrow(
                     """
-                    INSERT INTO users (email, password_hash, name, job)
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO users (
+                        email,
+                        password_hash,
+                        name,
+                        job,
+                        jurisdiction_code,
+                        jurisdiction_name
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6)
                     RETURNING id
                     """,
                     payload.email,
                     password_hash,
                     payload.name,
                     payload.job.value,
+                    jurisdiction_code,
+                    jurisdiction_name,
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise EmailAlreadyExistsError from exc
@@ -218,18 +281,29 @@ async def signup(payload: SignupRequest) -> dict[str, Any]:
             if user is None:
                 raise RuntimeError("Failed to create user.")
 
-            await conn.fetchrow(
-                """
-                INSERT INTO buildings (owner_id, name, address, latitude, longitude)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING id
-                """,
-                user["id"],
-                building_name,
-                payload.building_location.address,
-                payload.building_location.latitude,
-                payload.building_location.longitude,
-            )
+            if payload.job.value == "FACILITY_MANAGER":
+                await conn.fetchrow(
+                    """
+                    INSERT INTO buildings (
+                        owner_id,
+                        name,
+                        address,
+                        latitude,
+                        longitude,
+                        district_code,
+                        district_name
+                    )
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING id
+                    """,
+                    user["id"],
+                    building_name,
+                    payload.building_location.address,
+                    payload.building_location.latitude,
+                    payload.building_location.longitude,
+                    district_code,
+                    district_name,
+                )
 
             profile = await conn.fetchrow(
                 f"""

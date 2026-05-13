@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.data_transform import router as data_transform_router
+from app.api.viewer import router as viewer_router
 from app.api.dev import (
     upload_test_router as dev_upload_test_router,
     users_router as dev_users_router,
@@ -35,6 +36,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(data_transform_router)
+app.include_router(viewer_router)
 
 # dev 전용, 해당 기능 개발 완료 시 삭제
 app.include_router(dev_upload_test_router)

@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class JobType(StrEnum):
@@ -25,12 +25,42 @@ class BuildingLocationRequest(BaseModel):
         return address or None
 
 
+class JurisdictionRequest(BaseModel):
+    code: str | None = Field(default=None, max_length=100)
+    name: str = Field(..., min_length=1, max_length=255)
+
+    @field_validator("code")
+    @classmethod
+    def normalize_code(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        text = value.strip()
+        return text or None
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        name = value.strip()
+        if not name:
+            raise ValueError("jurisdiction name is required")
+
+        return name
+
+
+class JurisdictionResponse(BaseModel):
+    code: str | None
+    name: str | None
+
+
 class BuildingLocationResponse(BaseModel):
     id: UUID
     name: str
     address: str | None
     latitude: float
     longitude: float
+    district_code: str | None = None
+    district_name: str | None = None
 
 
 class SignupRequest(BaseModel):
@@ -39,6 +69,14 @@ class SignupRequest(BaseModel):
     name: str | None = Field(default=None, max_length=100)
     job: JobType
     building_location: BuildingLocationRequest
+    jurisdiction: JurisdictionRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_job_fields(self) -> "SignupRequest":
+        if self.job == JobType.FIREFIGHTER and self.jurisdiction is None:
+            raise ValueError("jurisdiction is required for firefighters")
+
+        return self
 
     @field_validator("job", mode="before")
     @classmethod
@@ -104,6 +142,7 @@ class UserResponse(BaseModel):
     email: str
     name: str | None
     job: JobType | None = None
+    jurisdiction: JurisdictionResponse | None = None
     created_at: datetime
     building: BuildingLocationResponse | None = None
 

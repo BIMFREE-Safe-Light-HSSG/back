@@ -112,12 +112,22 @@ class Database:
             password_hash TEXT NOT NULL,
             name VARCHAR(100),
             job VARCHAR(50),
+            jurisdiction_code VARCHAR(100),
+            jurisdiction_name VARCHAR(255),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
         await self.execute("""
         ALTER TABLE users
         ADD COLUMN IF NOT EXISTS job VARCHAR(50);
+        """)
+        await self.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS jurisdiction_code VARCHAR(100);
+        """)
+        await self.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS jurisdiction_name VARCHAR(255);
         """)
         await self.execute("""
         ALTER TABLE users
@@ -132,6 +142,8 @@ class Database:
             address TEXT,
             latitude DOUBLE PRECISION,
             longitude DOUBLE PRECISION,
+            district_code VARCHAR(100),
+            district_name VARCHAR(255),
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -143,6 +155,14 @@ class Database:
         await self.execute("""
         ALTER TABLE buildings
         ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS district_code VARCHAR(100);
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS district_name VARCHAR(255);
         """)
 
         await self.execute("""

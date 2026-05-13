@@ -13,6 +13,32 @@ echo "========================================"
 echo " BIMFree Backend Stop Script"
 echo "========================================"
 
+terminate_pid_tree() {
+  local pid="$1"
+  local child
+
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    terminate_pid_tree "$child"
+  done
+
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill "$pid" >/dev/null 2>&1 || true
+  fi
+}
+
+force_kill_pid_tree() {
+  local pid="$1"
+  local child
+
+  for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+    force_kill_pid_tree "$child"
+  done
+
+  if kill -0 "$pid" >/dev/null 2>&1; then
+    kill -KILL "$pid" >/dev/null 2>&1 || true
+  fi
+}
+
 # 1. PID 파일 기준 종료
 if [ -f "$PID_FILE" ]; then
   PID="$(cat "$PID_FILE" || true)"
@@ -20,13 +46,19 @@ if [ -f "$PID_FILE" ]; then
   if [ -n "${PID:-}" ] && kill -0 "$PID" >/dev/null 2>&1; then
     echo "[ACTION] PID 파일 기준 백엔드 종료 시도: PID=$PID"
 
-    # 해당 PID의 프로세스 그룹까지 종료 시도
-    PGID="$(ps -o pgid= "$PID" | tr -d ' ' || true)"
+    terminate_pid_tree "$PID"
 
-    if [ -n "${PGID:-}" ]; then
-      kill -- "-$PGID" >/dev/null 2>&1 || true
-    else
-      kill "$PID" >/dev/null 2>&1 || true
+    for _ in {1..10}; do
+      if ! kill -0 "$PID" >/dev/null 2>&1; then
+        break
+      fi
+
+      sleep 0.2
+    done
+
+    if kill -0 "$PID" >/dev/null 2>&1; then
+      echo "[WARN] 정상 종료가 지연되어 PID 트리만 강제 종료합니다."
+      force_kill_pid_tree "$PID"
     fi
 
     sleep 2
@@ -39,10 +71,13 @@ else
   echo "[INFO] .backend.pid 파일이 없습니다."
 fi
 
-# 2. uvicorn 프로세스 직접 종료
-if pgrep -f "uvicorn ${BACKEND_APP}" >/dev/null 2>&1; then
-  echo "[ACTION] 남아있는 uvicorn 프로세스 종료"
-  pkill -f "uvicorn ${BACKEND_APP}" || true
+# 2. run.sh가 띄운 앱/포트 조합만 보조 종료
+MATCHED_PIDS="$(pgrep -f "uvicorn ${BACKEND_APP} .*--port ${BACKEND_PORT}" || true)"
+if [ -n "$MATCHED_PIDS" ]; then
+  echo "[ACTION] ${BACKEND_APP}:${BACKEND_PORT} uvicorn 프로세스 종료"
+  for pid in $MATCHED_PIDS; do
+    terminate_pid_tree "$pid"
+  done
   sleep 2
 fi
 
