@@ -14,22 +14,46 @@ class BuildingLocationRequest(BaseModel):
     latitude: float = Field(..., ge=-90, le=90)
     longitude: float = Field(..., ge=-180, le=180)
     address: str | None = Field(default=None, max_length=500)
+    place_name: str | None = Field(default=None, max_length=255)
+    provider: str | None = Field(default=None, max_length=50)
+    provider_place_id: str | None = Field(default=None, max_length=255)
+    district_code: str | None = Field(default=None, max_length=100)
+    district_name: str | None = Field(default=None, max_length=255)
+    region_1depth_name: str | None = Field(default=None, max_length=255)
+    region_2depth_name: str | None = Field(default=None, max_length=255)
+    region_3depth_name: str | None = Field(default=None, max_length=255)
 
-    @field_validator("address")
+    @field_validator(
+        "address",
+        "place_name",
+        "provider",
+        "provider_place_id",
+        "district_code",
+        "district_name",
+        "region_1depth_name",
+        "region_2depth_name",
+        "region_3depth_name",
+    )
     @classmethod
-    def normalize_address(cls, value: str | None) -> str | None:
+    def normalize_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
 
-        address = value.strip()
-        return address or None
+        text = value.strip()
+        return text or None
 
 
 class JurisdictionRequest(BaseModel):
     code: str | None = Field(default=None, max_length=100)
     name: str | None = Field(default=None, max_length=255)
+    address: str | None = Field(default=None, max_length=500)
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+    provider: str | None = Field(default=None, max_length=50)
+    provider_place_id: str | None = Field(default=None, max_length=255)
+    region_1depth_name: str | None = Field(default=None, max_length=255)
+    region_2depth_name: str | None = Field(default=None, max_length=255)
+    region_3depth_name: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
     def validate_jurisdiction_source(self) -> "JurisdictionRequest":
@@ -43,23 +67,23 @@ class JurisdictionRequest(BaseModel):
 
         return self
 
-    @field_validator("code")
+    @field_validator(
+        "code",
+        "name",
+        "address",
+        "provider",
+        "provider_place_id",
+        "region_1depth_name",
+        "region_2depth_name",
+        "region_3depth_name",
+    )
     @classmethod
-    def normalize_code(cls, value: str | None) -> str | None:
+    def normalize_text(cls, value: str | None) -> str | None:
         if value is None:
             return None
 
         text = value.strip()
         return text or None
-
-    @field_validator("name")
-    @classmethod
-    def normalize_name(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-
-        name = value.strip()
-        return name or None
 
 
 class JurisdictionResponse(BaseModel):
@@ -73,6 +97,8 @@ class BuildingLocationResponse(BaseModel):
     id: UUID
     name: str
     address: str | None
+    provider: str | None = None
+    provider_place_id: str | None = None
     latitude: float
     longitude: float
     district_code: str | None = None

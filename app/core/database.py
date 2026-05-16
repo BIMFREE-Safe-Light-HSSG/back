@@ -150,6 +150,8 @@ class Database:
             owner_id UUID REFERENCES users(id) ON DELETE SET NULL,
             name VARCHAR(255) NOT NULL,
             address TEXT,
+            provider VARCHAR(50),
+            provider_place_id VARCHAR(255),
             latitude DOUBLE PRECISION,
             longitude DOUBLE PRECISION,
             district_code VARCHAR(100),
@@ -160,6 +162,14 @@ class Database:
             description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS provider VARCHAR(50);
+        """)
+        await self.execute("""
+        ALTER TABLE buildings
+        ADD COLUMN IF NOT EXISTS provider_place_id VARCHAR(255);
         """)
         await self.execute("""
         ALTER TABLE buildings

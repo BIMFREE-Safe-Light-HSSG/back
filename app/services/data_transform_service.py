@@ -24,6 +24,14 @@ class BuildingNotFoundError(Exception):
     pass
 
 
+class BuildingAccessDeniedError(Exception):
+    pass
+
+
+class InvalidUploaderJobError(Exception):
+    pass
+
+
 class StorageConfigurationError(Exception):
     pass
 
@@ -214,14 +222,47 @@ def _generate_presigned_put_url(
     )
 
 
-async def create_upload_request(payload: UploadRequest) -> dict[str, Any]:
-    if payload.building_id is not None:
-        building = await db.fetch_one(
-            "SELECT id FROM buildings WHERE id = $1",
-            payload.building_id,
-        )
-        if building is None:
-            raise BuildingNotFoundError
+async def _get_owned_building(
+    building_id: uuid.UUID,
+    current_user: dict[str, Any],
+) -> dict[str, Any]:
+    if current_user.get("job") != "FACILITY_MANAGER":
+        raise InvalidUploaderJobError
+
+    building = await db.fetch_one(
+        """
+        SELECT id
+        FROM buildings
+        WHERE id = $1
+        """,
+        building_id,
+    )
+    if building is None:
+        raise BuildingNotFoundError
+
+    owned_building = await db.fetch_one(
+        """
+        SELECT id
+        FROM buildings
+        WHERE id = $1 AND owner_id = $2
+        """,
+        building_id,
+        current_user["id"],
+    )
+    if owned_building is None:
+        raise BuildingAccessDeniedError
+
+    return owned_building
+
+
+async def create_upload_request(
+    payload: UploadRequest,
+    current_user: dict[str, Any],
+) -> dict[str, Any]:
+    if payload.building_id is None:
+        raise BuildingNotFoundError
+
+    await _get_owned_building(payload.building_id, current_user)
 
     task_id = uuid.uuid4()
     bucket_name = _bucket_name()
@@ -338,7 +379,10 @@ async def _request_graph_data_from_model_server(task: dict[str, Any]) -> Any:
     return _extract_graph_data(response_json)
 
 
-async def complete_upload(task_id: uuid.UUID) -> dict[str, Any]:
+async def complete_upload(
+    task_id: uuid.UUID,
+    current_user: dict[str, Any],
+) -> dict[str, Any]:
     task = await db.fetch_one(
         """
         SELECT id, building_id, status, scan_file_path
@@ -349,6 +393,11 @@ async def complete_upload(task_id: uuid.UUID) -> dict[str, Any]:
     )
     if task is None:
         raise TaskNotFoundError
+
+    if task["building_id"] is None:
+        raise BuildingNotFoundError
+
+    await _get_owned_building(task["building_id"], current_user)
 
     if task["status"] == "PROCESSING":
         raise InvalidTaskStatusError

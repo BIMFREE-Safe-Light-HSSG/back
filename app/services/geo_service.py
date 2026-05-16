@@ -88,12 +88,13 @@ def fallback_location_from_address(
         "longitude": longitude,
         "address": address,
         "building_name": None,
+        "provider": "FALLBACK",
+        "provider_place_id": None,
         "district_code": _normalize_area_code(district_name),
         "district_name": district_name,
         "region_1depth_name": None,
         "region_2depth_name": district_name,
         "region_3depth_name": None,
-        "provider": "FALLBACK",
     }
 
 
@@ -177,10 +178,11 @@ async def reverse_geocode(latitude: float, longitude: float) -> dict[str, Any]:
         "longitude": longitude,
         "address": address,
         "building_name": building_name,
+        "provider": "KAKAO",
+        "provider_place_id": None,
         "district_code": district_code,
         "district_name": district_name,
         "region_1depth_name": region_document.get("region_1depth_name") or None,
         "region_2depth_name": district_name,
         "region_3depth_name": region_document.get("region_3depth_name") or None,
-        "provider": "KAKAO",
     }

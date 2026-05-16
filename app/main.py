@@ -7,6 +7,8 @@ from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
 from app.api.data_transform import router as data_transform_router
+from app.api.emergency import router as emergency_router
+from app.api.facility import router as facility_router
 from app.api.geo import router as geo_router
 from app.api.viewer import router as viewer_router
 from app.api.dev import (
@@ -17,6 +19,15 @@ from app.core.database import db
 
 
 load_dotenv()
+
+
+def _dev_routes_enabled() -> bool:
+    return os.getenv("ENABLE_DEV_ROUTES", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 @asynccontextmanager
@@ -37,12 +48,14 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(data_transform_router)
+app.include_router(emergency_router)
+app.include_router(facility_router)
 app.include_router(geo_router)
 app.include_router(viewer_router)
 
-# dev 전용, 해당 기능 개발 완료 시 삭제
-app.include_router(dev_upload_test_router)
-app.include_router(dev_users_router)
+if _dev_routes_enabled():
+    app.include_router(dev_upload_test_router)
+    app.include_router(dev_users_router)
 
 
 @app.get("/health", tags=["health"])
