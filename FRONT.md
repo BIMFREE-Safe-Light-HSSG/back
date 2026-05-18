@@ -485,6 +485,52 @@ Authorization: Bearer <access_token>
 502: 모델 서버 요청 실패
 ```
 
+### 데모용 샘플 scene graph 업로드
+
+모델 서버가 준비되지 않은 시연 환경에서는 `ENABLE_DEV_ROUTES=true`일 때 아래 dev API를 사용할 수 있다. 이 API는 MinIO 업로드와 모델 서버 호출을 건너뛰고, 서버의 `tmp/scene_graph_skeleton.json`을 해당 건물의 최신 scene graph로 저장한다.
+
+```http
+POST /dev/data_transform/sample_upload
+Content-Type: application/json
+Authorization: Bearer <access_token>
+```
+
+요청 body는 기존 `/data_transform/upload`와 동일하다.
+
+```json
+{
+  "filename": "demo-scan.zip",
+  "content_type": "application/zip",
+  "building_id": "11111111-1111-1111-1111-111111111111"
+}
+```
+
+응답은 `/data_transform/{task_id}/complete_upload`와 같은 형태다.
+
+```json
+{
+  "message": "Demo upload completed and sample scene graph saved successfully.",
+  "task_id": "33333333-3333-3333-3333-333333333333",
+  "status": "COMPLETED",
+  "graph_data_id": "22222222-2222-2222-2222-222222222222",
+  "graph_data": {
+    "nodes": [],
+    "edges": []
+  }
+}
+```
+
+현재 기본 허용 유저는 `ce25f278-cdb4-4ccb-94a7-73d7396ce65c`다. 로그인한 사용자가 이 UUID이고, `building_id`가 해당 사용자의 소유 건물일 때만 성공한다. 운영 빌드에서는 이 API를 사용하지 않는다.
+
+에러:
+
+```txt
+401: 로그인 필요 또는 토큰 만료
+403: 데모 허용 유저가 아니거나 해당 건물 접근 권한 없음
+404: building 없음
+500: 샘플 scene graph 파일 없음 또는 JSON 파싱 실패
+```
+
 ### 업로드 화면에서 관리할 상태
 
 ```txt

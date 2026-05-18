@@ -1,8 +1,15 @@
 {$API_PUBLIC_DOMAIN} {
-	@cors_preflight method OPTIONS
+	@allowed_origin {
+		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
+	}
 
-	header {
-		Access-Control-Allow-Origin "{$FRONTEND_ORIGIN}"
+	@cors_preflight {
+		method OPTIONS
+		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
+	}
+
+	header @allowed_origin {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
 		Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
 		Access-Control-Allow-Headers "*"
 		Vary "Origin"
@@ -13,14 +20,26 @@
 	reverse_proxy host.docker.internal:8000 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}
+		header_down -Access-Control-Allow-Origin
+		header_down -Access-Control-Allow-Credentials
+		header_down -Access-Control-Allow-Methods
+		header_down -Access-Control-Allow-Headers
+		header_down -Vary
 	}
 }
 
 {$MINIO_PUBLIC_DOMAIN} {
-	@cors_preflight method OPTIONS
+	@allowed_origin {
+		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
+	}
 
-	header @cors_preflight {
-		Access-Control-Allow-Origin "{$FRONTEND_ORIGIN}"
+	@cors_preflight {
+		method OPTIONS
+		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
+	}
+
+	header @allowed_origin {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
 		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
 		Access-Control-Allow-Headers "*"
 		Access-Control-Expose-Headers "ETag"
