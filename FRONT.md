@@ -3,7 +3,7 @@
 SuperSafeTwin 백엔드와 프론트엔드 연동 계약입니다. 현재 API는 JWT 인증을 사용하고, 건물 조회는 역할별 API가 아니라 공통 `/buildings` API에서 권한에 따라 필터링합니다.
 
 ## Base Rules
-
+- Backend base URL : `https://supersafetwin-backend.duckdns.org`
 - 인증이 필요한 API는 `Authorization: Bearer <access_token>` 헤더를 보냅니다.
 - 요청/응답은 JSON입니다. 단, MinIO 업로드는 presigned URL로 직접 `PUT` 합니다.
 - 프론트는 Kakao Maps JS SDK 등으로 확정한 행정구역 값을 백엔드에 전달합니다. 백엔드는 Kakao/geo 보정 API를 제공하지 않습니다.
