@@ -1,7 +1,7 @@
 [project]
-name = "back"
+name = "supersafetwin-backend"
 version = "0.1.0"
-description = "BIMFree FastAPI backend"
+description = "SuperSafeTwin FastAPI backend"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

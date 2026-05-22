@@ -1,37 +1,36 @@
 services:
   postgres:
-    image: ${POSTGRES_IMAGE:-postgres:16}
-    container_name: ${POSTGRES_CONTAINER_NAME:-BIMFree_postgres}
-    restart: ${POSTGRES_RESTART_POLICY:-always}
+    image: postgres:16
+    container_name: SuperSafeTwin_postgres
+    restart: always
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-nullpo}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
-      POSTGRES_DB: ${POSTGRES_DB:-BIMFree_db}
+      POSTGRES_DB: ${POSTGRES_DB:-SuperSafeTwin_db}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   minio:
-    image: ${MINIO_IMAGE:-minio/minio:latest}
-    container_name: ${MINIO_CONTAINER_NAME:-BIMFree_minio}
-    restart: ${MINIO_RESTART_POLICY:-always}
+    image: minio/minio:latest
+    container_name: SuperSafeTwin_minio
+    restart: always
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
-      MINIO_SERVER_URL: https://${MINIO_PUBLIC_DOMAIN:-bimfree-minio.duckdns.org}
-      MINIO_API_CORS_ALLOW_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env to your frontend origin}
+      MINIO_SERVER_URL: ${MINIO_PUBLIC_SCHEME:-https}://${MINIO_PUBLIC_DOMAIN:-supersafetwin-minio.duckdns.org}
     ports:
-      - "9001:9001"
+      - "${MINIO_CONSOLE_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
     expose:
       - "9000"
     volumes:
       - minio_data:/data
 
   minio-init:
-    image: ${MINIO_MC_IMAGE:-minio/mc:latest}
-    container_name: ${MINIO_INIT_CONTAINER_NAME:-BIMFree_minio_init}
+    image: minio/mc:latest
+    container_name: SuperSafeTwin_minio_init
     depends_on:
       - minio
     restart: "no"
@@ -39,7 +38,6 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-scan-files}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env to your frontend origin}
     entrypoint: /bin/sh
     command:
       - -c
@@ -54,20 +52,21 @@ services:
         mc anonymous set none "local/$${MINIO_BUCKET_NAME}"
 
   caddy:
-    image: ${CADDY_IMAGE:-caddy:2-alpine}
-    container_name: ${CADDY_CONTAINER_NAME:-BIMFree_caddy}
-    restart: ${CADDY_RESTART_POLICY:-always}
+    image: caddy:2-alpine
+    container_name: SuperSafeTwin_caddy
+    restart: always
     depends_on:
       - minio
     environment:
-      API_PUBLIC_DOMAIN: ${API_PUBLIC_DOMAIN:-bimfree-backend.duckdns.org}
-      MINIO_PUBLIC_DOMAIN: ${MINIO_PUBLIC_DOMAIN:-bimfree-minio.duckdns.org}
+      API_PUBLIC_DOMAIN: ${API_PUBLIC_DOMAIN:-supersafetwin-backend.duckdns.org}
+      MINIO_PUBLIC_DOMAIN: ${MINIO_PUBLIC_DOMAIN:-supersafetwin-minio.duckdns.org}
+      BACKEND_PORT: ${BACKEND_PORT:-8000}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env to your frontend origin}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "80:80"
+      - "443:443"
     volumes:
       - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

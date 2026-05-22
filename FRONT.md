@@ -1,152 +1,89 @@
-# BIMFree Frontend API Guide
+# Frontend Integration Guide
 
-이 문서는 프론트엔드에서 회원가입, 로그인, 업무 페이지 진입 화면을 만들기 위해 필요한 API 계약만 정리한다.
+SuperSafeTwin 백엔드와 프론트엔드 연동 계약입니다. 현재 API는 JWT 인증을 사용하고, 건물 조회는 역할별 API가 아니라 공통 `/buildings` API에서 권한에 따라 필터링합니다.
 
-## 공통
+## Base Rules
 
-API Base URL:
+- 인증이 필요한 API는 `Authorization: Bearer <access_token>` 헤더를 보냅니다.
+- 요청/응답은 JSON입니다. 단, MinIO 업로드는 presigned URL로 직접 `PUT` 합니다.
+- 프론트는 Kakao Maps JS SDK 등으로 확정한 행정구역 값을 백엔드에 전달합니다. 백엔드는 Kakao/geo 보정 API를 제공하지 않습니다.
+- 시설관리자 건물 등록과 소방대원 관할 매칭은 `district_code`/`district_name` 기준입니다.
 
-```txt
-https://bimfree-backend.duckdns.org
-```
+## Current Routes
 
-로컬 개발:
-
-```txt
-http://127.0.0.1:8000
-```
-
-로그인 이후 보호 API는 항상 아래 헤더를 붙인다.
-
-```http
-Authorization: Bearer <access_token>
-```
-
-## Kakao Map 사용
-
-회원가입의 건물 선택/관할 지구 선택 지도는 Kakao Maps JavaScript SDK 사용을 권장한다.
-
-프론트에는 Kakao JavaScript 키를 사용한다. 이 키는 브라우저에 노출될 수 있으므로 Kakao Developers에서 웹 플랫폼 도메인 제한을 반드시 설정한다.
-
-백엔드는 Kakao REST API 키를 `.env`의 `KAKAO_REST_API_KEY`로 사용한다. REST API 키는 프론트에 노출하지 않는다.
-
-Kakao Maps API는 무료 제공 쿼터가 있다. 공식 문서 기준으로 Map JavaScript SDK는 일 300,000건, Local API의 좌표->행정구역/주소 변환은 각각 일 100,000건 무료 제공 쿼터가 있으며, 유료 API를 적용하면 초과 사용분 과금이 가능하다. 따라서 "무조건 완전 무료"라기보다는 "무료 쿼터 안에서는 무료"로 이해하면 된다.
-
-## 직업 값
-
-서버 표준 값:
-
-```txt
-FACILITY_MANAGER
-FIREFIGHTER
-```
-
-프론트에서 한글 값을 보내도 서버가 정규화한다.
-
-```txt
-시설관리자 -> FACILITY_MANAGER
-소방대원 -> FIREFIGHTER
-```
-
-## 회원가입
-
-```http
+```text
 POST /auth/signup
-Content-Type: application/json
+POST /auth/login
+GET  /auth/me
+
+GET  /buildings
+GET  /buildings/{building_id}/scene-graph
+
+POST /facility/buildings
+
+POST /data-transforms/upload
+GET  /data-transforms/{task_id}
+POST /data-transforms/{task_id}/complete-upload
+
+GET  /health
 ```
 
-### 시설관리자 회원가입
+## Auth
 
-시설관리자는 Kakao 장소 검색 결과에서 자신의 건물을 선택한다. 프론트는 검색 결과의 좌표, 장소명, 주소, 행정구역 정보를 백엔드에 보낸다. `district_code/district_name`이 있으면 백엔드는 Kakao API를 다시 호출하지 않고 그대로 저장한다.
+### POST /auth/signup
+
+회원가입입니다.
+
+시설관리자는 계정 정보만 보냅니다. 건물은 회원가입 후 `POST /facility/buildings`에서 따로 등록합니다.
 
 ```json
 {
-  "name": "홍길동",
-  "job": "FACILITY_MANAGER",
-  "building_location": {
-    "latitude": 36.3651,
-    "longitude": 127.3456,
-    "place_name": "충남대학교 공과대학 5호관",
-    "address": "대전광역시 유성구 대학로 99",
-    "provider": "KAKAO",
-    "provider_place_id": "1234567890",
-    "district_code": "30200",
-    "district_name": "유성구",
-    "region_1depth_name": "대전광역시",
-    "region_2depth_name": "유성구",
-    "region_3depth_name": "궁동"
-  },
-  "email": "manager@example.com",
-  "password": "password123"
+  "email": "sisul@aaa.com",
+  "password": "qwe123",
+  "name": "김시설",
+  "job": "FACILITY_MANAGER"
 }
 ```
 
-### 소방대원 회원가입
-
-소방대원은 Kakao 주소/지역 검색으로 자신의 관할 지구를 선택한다. 프론트는 관할 지구의 `code/name`을 백엔드에 보내고, 뷰어에서는 같은 관할 지구의 건물들이 조회된다.
+소방대원은 관할 정보를 함께 보냅니다.
 
 ```json
 {
+  "email": "sobang@aaa.com",
+  "password": "qwe123",
   "name": "김소방",
   "job": "FIREFIGHTER",
   "jurisdiction": {
-    "code": "30200",
-    "name": "유성구",
-    "address": "대전광역시 유성구",
-    "latitude": 36.3622,
-    "longitude": 127.3563,
-    "provider": "KAKAO",
-    "region_1depth_name": "대전광역시",
-    "region_2depth_name": "유성구"
-  },
-  "email": "firefighter@example.com",
-  "password": "password123"
+    "code": "3020012200",
+    "name": "유성구"
+  }
 }
 ```
 
-소방대원은 `building_location`을 보내지 않는다. `code/name`이 없고 좌표만 있는 경우에만 백엔드가 Kakao reverse geocoding을 fallback으로 수행한다.
+`jurisdiction.code`와 `jurisdiction.name`은 프론트에서 Kakao Maps JS SDK의 행정구역 결과를 기준으로 채웁니다. 건물 등록의 `district_code`, `district_name`과 같은 규칙을 사용해야 소방대원 건물 조회가 맞게 동작합니다.
 
-### 회원가입 응답
+응답:
 
 ```json
 {
   "message": "Signup completed successfully.",
   "user": {
-    "id": "00000000-0000-0000-0000-000000000000",
-    "email": "manager@example.com",
-    "name": "홍길동",
+    "id": "uuid",
+    "email": "sisul@aaa.com",
+    "name": "김시설",
     "job": "FACILITY_MANAGER",
     "jurisdiction": null,
-    "created_at": "2026-05-13T00:00:00",
-    "building": {
-      "id": "11111111-1111-1111-1111-111111111111",
-      "name": "서울특별시 중구 세종대로 110",
-      "address": "서울특별시 중구 세종대로 110",
-      "latitude": 37.5665,
-      "longitude": 126.978,
-      "district_code": "11140",
-      "district_name": "중구",
-      "region_1depth_name": "서울특별시",
-      "region_2depth_name": "중구",
-      "region_3depth_name": "태평로1가"
-    }
+    "created_at": "2026-05-22T00:00:00"
   }
 }
 ```
 
-소방대원 응답은 `building`이 `null`이고 `jurisdiction`이 채워진다.
-
-## 로그인
-
-```http
-POST /auth/login
-Content-Type: application/json
-```
+### POST /auth/login
 
 ```json
 {
-  "email": "manager@example.com",
-  "password": "password123"
+  "email": "sisul@aaa.com",
+  "password": "qwe123"
 }
 ```
 
@@ -155,145 +92,74 @@ Content-Type: application/json
 ```json
 {
   "message": "Login completed successfully.",
-  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "access_token": "jwt-token",
   "token_type": "bearer",
   "user": {
-    "id": "00000000-0000-0000-0000-000000000000",
-    "email": "manager@example.com",
-    "name": "홍길동",
+    "id": "uuid",
+    "email": "sisul@aaa.com",
+    "name": "김시설",
     "job": "FACILITY_MANAGER",
     "jurisdiction": null,
-    "created_at": "2026-05-13T00:00:00",
-    "building": {
-      "id": "11111111-1111-1111-1111-111111111111",
-      "name": "서울특별시 중구 세종대로 110",
-      "address": "서울특별시 중구 세종대로 110",
-      "latitude": 37.5665,
-      "longitude": 126.978,
-      "district_code": "11140",
-      "district_name": "중구",
-      "region_1depth_name": "서울특별시",
-      "region_2depth_name": "중구",
-      "region_3depth_name": "태평로1가"
-    }
+    "created_at": "2026-05-22T00:00:00"
   }
 }
 ```
 
-프론트는 `access_token`을 저장하고, 이후 뷰어 API 호출에 사용한다.
-
-## 현재 사용자 조회
-
-새로고침 후 로그인 상태 복원에 사용한다.
+프론트는 `access_token`을 저장하고 이후 보호 API 호출에 사용합니다.
 
 ```http
-GET /auth/me
 Authorization: Bearer <access_token>
 ```
 
-응답 형태는 로그인 응답 안의 `user` 객체와 같다.
+### GET /auth/me
 
-## 지도 좌표 검증
-
-프론트가 Kakao 검색 결과에서 행정구역 정보를 얻지 못했거나, 좌표만 선택된 경우 보조로 사용할 수 있는 API다. 회원가입 submit에는 가능하면 프론트 검색 결과의 `district_code/district_name`을 포함해서 보낸다.
-
-```http
-GET /geo/reverse-geocode?latitude=37.5665&longitude=126.978
-```
+현재 로그인 사용자를 조회합니다.
 
 응답:
 
 ```json
 {
-  "latitude": 37.5665,
-  "longitude": 126.978,
-  "address": "서울특별시 중구 세종대로 110",
-  "building_name": null,
-  "district_code": "11140",
-  "district_name": "중구",
-  "region_1depth_name": "서울특별시",
-  "region_2depth_name": "중구",
-  "region_3depth_name": "태평로1가",
-  "provider": "KAKAO"
+  "id": "uuid",
+  "email": "sisul@aaa.com",
+  "name": "김시설",
+  "job": "FACILITY_MANAGER",
+  "jurisdiction": null,
+  "created_at": "2026-05-22T00:00:00"
 }
 ```
 
-프론트 사용 방식:
+건물 정보는 `/auth/me`에 포함되지 않습니다. 건물 목록은 `GET /buildings`로 가져옵니다.
 
-```txt
-시설관리자: 선택한 좌표를 건물 위치로 확인하고, 응답의 address/district_name을 화면에 표시
-소방대원: 선택한 좌표를 관할 지구로 확인하고, 응답의 district_name을 화면에 표시
-```
+## Buildings
 
-회원가입 submit 시 `district_code/district_name`이 포함되어 있으면 백엔드는 Kakao API를 다시 호출하지 않는다. 이 값이 없고 좌표만 있으면 백엔드가 fallback으로 Kakao Local API를 호출한다.
+### POST /facility/buildings
 
-## 업무 페이지 진입
-
-viewer component를 포함한 업무 페이지 진입 시 아래 API 하나만 호출하면 된다.
+시설관리자 전용 건물 등록 API입니다.
 
 ```http
-GET /facility/workspace 또는 GET /emergency/workspace
-Authorization: Bearer <access_token>
+Authorization: Bearer <facility_manager_access_token>
 ```
 
-응답:
+필수 필드:
+
+```text
+latitude
+longitude
+district_code
+district_name
+```
+
+요청 예시:
 
 ```json
 {
-  "buildings": [
-    {
-      "id": "11111111-1111-1111-1111-111111111111",
-      "name": "서울특별시 중구 세종대로 110",
-      "address": "서울특별시 중구 세종대로 110",
-      "latitude": 37.5665,
-      "longitude": 126.978,
-      "district_code": "11140",
-      "district_name": "중구",
-      "region_1depth_name": "서울특별시",
-      "region_2depth_name": "중구",
-      "region_3depth_name": "태평로1가",
-      "has_scene_graph": true,
-      "latest_graph_created_at": "2026-05-13T00:00:00"
-    }
-  ],
-  "default_building_id": "11111111-1111-1111-1111-111111111111",
-  "default_scene_graph": {
-    "building_id": "11111111-1111-1111-1111-111111111111",
-    "building_name": "서울특별시 중구 세종대로 110",
-    "graph_data_id": "22222222-2222-2222-2222-222222222222",
-    "created_at": "2026-05-13T00:00:00",
-    "scene_graph": {
-      "nodes": [],
-      "edges": []
-    }
-  }
-}
-```
-
-`default_scene_graph`는 기본 선택 건물에 scene graph가 있을 때만 내려온다. 없으면 `null`이다.
-
-
-## 시설관리자 건물 추가
-
-시설관리 페이지에서 관리 건물을 추가할 때 사용한다. `FACILITY_MANAGER`만 호출할 수 있다.
-
-```http
-POST /facility/buildings
-Content-Type: application/json
-Authorization: Bearer <access_token>
-```
-
-요청은 회원가입의 `building_location`과 같은 형태다.
-
-```json
-{
-  "latitude": 36.3651,
-  "longitude": 127.3456,
-  "place_name": "충남대학교 공과대학 5호관",
-  "address": "대전광역시 유성구 대학로 99",
+  "latitude": 36.3665878795959,
+  "longitude": 127.344385744499,
+  "address": "대전 유성구 대학로 99",
+  "place_name": "충남대학교 공과대학5호관",
   "provider": "KAKAO",
-  "provider_place_id": "1234567890",
-  "district_code": "30200",
+  "provider_place_id": "17561301",
+  "district_code": "3020012200",
   "district_name": "유성구",
   "region_1depth_name": "대전광역시",
   "region_2depth_name": "유성구",
@@ -301,115 +167,115 @@ Authorization: Bearer <access_token>
 }
 ```
 
-응답은 생성된 건물 정보다. 생성 후 `/facility/workspace` 또는 `/facility/buildings`를 다시 호출해 목록을 갱신한다.
+응답:
 
-## 건물 목록만 조회
-
-건물 선택 UI를 따로 갱신할 때 사용한다.
-
-```http
-GET /facility/buildings 또는 GET /emergency/buildings
-Authorization: Bearer <access_token>
+```json
+{
+  "id": "building-uuid",
+  "name": "충남대학교 공과대학5호관",
+  "address": "대전 유성구 대학로 99",
+  "provider": "KAKAO",
+  "provider_place_id": "17561301",
+  "latitude": 36.3665878795959,
+  "longitude": 127.344385744499,
+  "district_code": "3020012200",
+  "district_name": "유성구",
+  "region_1depth_name": "대전광역시",
+  "region_2depth_name": "유성구",
+  "region_3depth_name": "궁동"
+}
 ```
 
-시설관리자는 본인 소유 건물만 받는다. 소방대원은 본인 관할 지구 건물만 받는다.
+백엔드는 건물 생성 후 `user_buildings`에 시설관리자와 건물 관계를 저장합니다.
+
+### GET /buildings
+
+현재 로그인 사용자가 접근 가능한 건물 목록을 반환합니다.
+
+시설관리자:
+
+```text
+user_buildings 기준으로 본인이 관리하는 건물만 반환
+```
+
+소방대원:
+
+```text
+users.jurisdiction_code/name과 buildings.district_code/name이 매칭되는 건물 반환
+```
 
 응답:
 
 ```json
 [
   {
-    "id": "11111111-1111-1111-1111-111111111111",
-    "name": "서울특별시 중구 세종대로 110",
-    "address": "서울특별시 중구 세종대로 110",
-    "latitude": 37.5665,
-    "longitude": 126.978,
-    "district_code": "11140",
-    "district_name": "중구",
-    "region_1depth_name": "서울특별시",
-    "region_2depth_name": "중구",
-    "region_3depth_name": "태평로1가",
-    "has_scene_graph": true,
-    "latest_graph_created_at": "2026-05-13T00:00:00"
+    "id": "building-uuid",
+    "name": "충남대학교 공과대학5호관",
+    "address": "대전 유성구 대학로 99",
+    "latitude": 36.3665878795959,
+    "longitude": 127.344385744499,
+    "district_code": "3020012200",
+    "district_name": "유성구",
+    "region_1depth_name": "대전광역시",
+    "region_2depth_name": "유성구",
+    "region_3depth_name": "궁동",
+    "has_scene_graph": false,
+    "latest_graph_created_at": null
   }
 ]
 ```
 
-## 특정 건물 Scene Graph 조회
+### GET /buildings/{building_id}/scene-graph
 
-건물 목록에서 선택한 건물을 뷰어에 띄울 때 사용한다.
-
-```http
-GET /facility/buildings/{building_id}/scene-graph 또는 GET /emergency/buildings/{building_id}/scene-graph
-Authorization: Bearer <access_token>
-```
+선택한 건물의 최신 scene graph를 조회합니다. 백엔드는 요청자의 권한을 다시 확인합니다.
 
 응답:
 
 ```json
 {
-  "building_id": "11111111-1111-1111-1111-111111111111",
-  "building_name": "서울특별시 중구 세종대로 110",
-  "graph_data_id": "22222222-2222-2222-2222-222222222222",
-  "created_at": "2026-05-13T00:00:00",
+  "building_id": "building-uuid",
+  "building_name": "충남대학교 공과대학5호관",
+  "graph_data_id": "graph-data-uuid",
+  "created_at": "2026-05-22T00:00:00",
   "scene_graph": {
+    "version": "1.0",
     "nodes": [],
-    "edges": []
+    "edges": [],
+    "assets": {}
   }
 }
 ```
 
-에러:
+scene graph JSON에는 의미 정보만 둡니다. 영상, point cloud, mesh, glb 같은 무거운 asset은 MinIO에 두고 scene graph에는 asset id 또는 URL만 포함하는 방향입니다.
 
-```txt
-401: 로그인 필요 또는 토큰 만료
-403: 해당 건물 접근 권한 없음
-404: 건물이 없거나 scene graph가 없음
-```
+## Data Transform
 
-## 스캔 파일 업로드 및 변환
+현재 변환은 `data-transforms` task를 통해 진행합니다. 업로드 진행률과 변환 진행률은 분리해서 관리합니다.
 
-시설관리자가 자신의 건물 scene graph를 만들거나 갱신할 때 사용한다. 서버도 `FACILITY_MANAGER`가 본인 소유 건물에 업로드하는 경우만 허용한다.
+### POST /data-transforms/upload
 
-전체 흐름:
-
-```txt
-1. POST /data_transform/upload
-2. 응답의 upload_url로 파일 PUT
-3. POST /data_transform/{task_id}/complete_upload
-4. GET /facility/buildings/{building_id}/scene-graph 또는 GET /emergency/buildings/{building_id}/scene-graph 또는 GET /facility/workspace 또는 GET /emergency/workspace 재호출
-```
-
-### 1. 업로드 URL 요청
-
-```http
-POST /data_transform/upload
-Content-Type: application/json
-Authorization: Bearer <access_token>
-```
+시설관리자가 스캔 파일 업로드 URL을 요청합니다.
 
 요청:
 
 ```json
 {
+  "building_id": "building-uuid",
   "filename": "scan.zip",
-  "content_type": "application/zip",
-  "building_id": "11111111-1111-1111-1111-111111111111"
+  "content_type": "application/zip"
 }
 ```
-
-`building_id`는 필수다. 로그인 응답의 `user.building.id` 또는 `/facility/buildings`에서 받은 본인 소유 건물 `id`를 사용한다. 시설관리자는 `/facility/buildings`로 추가 건물을 등록할 수 있다.
 
 응답:
 
 ```json
 {
-  "task_id": "33333333-3333-3333-3333-333333333333",
+  "task_id": "task-uuid",
   "status": "PENDING",
   "bucket_name": "scan-files",
-  "object_key": "data-transform/33333333-3333-3333-3333-333333333333/scan.zip",
-  "scan_file_path": "s3://scan-files/data-transform/33333333-3333-3333-3333-333333333333/scan.zip",
-  "upload_url": "https://bimfree-minio.duckdns.org/scan-files/data-transform/33333333-3333-3333-3333-333333333333/scan.zip?...",
+  "object_key": "data-transform/task-uuid/scan.zip",
+  "scan_file_path": "s3://scan-files/data-transform/task-uuid/scan.zip",
+  "upload_url": "https://...",
   "method": "PUT",
   "expires_in": 900,
   "headers": {
@@ -418,159 +284,137 @@ Authorization: Bearer <access_token>
 }
 ```
 
-프론트는 `task_id`, `upload_url`, `headers`를 저장한다.
+프론트는 `upload_url`로 파일을 직접 PUT 업로드합니다. 이때 업로드 진행률은 프론트의 upload progress event로 표시합니다.
 
-### 2. MinIO에 파일 직접 업로드
+### PUT upload_url
 
-백엔드가 내려준 `upload_url`로 파일을 직접 `PUT`한다. 이 요청은 백엔드 API가 아니라 MinIO presigned URL 요청이다.
+백엔드 API가 아니라 MinIO presigned URL 호출입니다.
 
 ```http
 PUT <upload_url>
 Content-Type: application/zip
 ```
 
-요청 body:
+업로드 성공 후 다음 API를 호출합니다.
 
-```txt
-업로드할 원본 파일 binary
-```
+### POST /data-transforms/{task_id}/complete-upload
 
-예시:
+업로드 완료를 백엔드에 알리고 변환을 시작합니다.
 
-```ts
-await fetch(uploadUrl, {
-  method: "PUT",
-  headers: {
-    "Content-Type": file.type || "application/octet-stream"
-  },
-  body: file
-});
-```
-
-성공 기준은 HTTP 200 계열 응답이다. 업로드가 성공한 뒤에만 완료 API를 호출한다.
-
-### 3. 업로드 완료 및 모델 서버 변환 요청
-
-```http
-POST /data_transform/{task_id}/complete_upload
-Authorization: Bearer <access_token>
-```
-
-요청 body는 없다.
+응답 상태 코드는 `202 Accepted`입니다.
 
 응답:
 
 ```json
 {
-  "message": "Upload completed and graph data saved successfully.",
-  "task_id": "33333333-3333-3333-3333-333333333333",
-  "status": "COMPLETED",
-  "graph_data_id": "22222222-2222-2222-2222-222222222222",
-  "graph_data": {
-    "nodes": [],
-    "edges": []
-  }
+  "task_id": "task-uuid",
+  "building_id": "building-uuid",
+  "status": "PROCESSING",
+  "progress_percent": 10,
+  "error_message": null
 }
 ```
 
-`graph_data`는 바로 viewer component에 반영해도 되고, 변환 완료 후 `/facility/buildings/{building_id}/scene-graph`를 다시 호출해서 서버의 최신 scene graph를 가져와도 된다.
+백엔드는 응답을 먼저 반환하고, 모델 서버 변환과 graph 저장은 백그라운드에서 수행합니다.
 
-에러:
+### GET /data-transforms/{task_id}
 
-```txt
-401: 로그인 필요 또는 토큰 만료
-404: task 또는 building 없음
-409: 이미 처리 중인 task
-500: MinIO 또는 서버 설정 문제
-502: 모델 서버 요청 실패
-```
+변환 상태를 polling합니다.
 
-### 데모용 샘플 scene graph 업로드
-
-모델 서버가 준비되지 않은 시연 환경에서는 `ENABLE_DEV_ROUTES=true`일 때 아래 dev API를 사용할 수 있다. 이 API는 MinIO 업로드와 모델 서버 호출을 건너뛰고, 서버의 `tmp/scene_graph_skeleton.json`을 해당 건물의 최신 scene graph로 저장한다.
-
-```http
-POST /dev/data_transform/sample_upload
-Content-Type: application/json
-Authorization: Bearer <access_token>
-```
-
-요청 body는 기존 `/data_transform/upload`와 동일하다.
+응답:
 
 ```json
 {
-  "filename": "demo-scan.zip",
-  "content_type": "application/zip",
-  "building_id": "11111111-1111-1111-1111-111111111111"
+  "task_id": "task-uuid",
+  "building_id": "building-uuid",
+  "status": "PROCESSING",
+  "progress_percent": 10,
+  "error_message": null
 }
 ```
 
-응답은 `/data_transform/{task_id}/complete_upload`와 같은 형태다.
+완료 시:
 
 ```json
 {
-  "message": "Demo upload completed and sample scene graph saved successfully.",
-  "task_id": "33333333-3333-3333-3333-333333333333",
+  "task_id": "task-uuid",
+  "building_id": "building-uuid",
   "status": "COMPLETED",
-  "graph_data_id": "22222222-2222-2222-2222-222222222222",
-  "graph_data": {
-    "nodes": [],
-    "edges": []
-  }
+  "progress_percent": 100,
+  "error_message": null
 }
 ```
 
-현재 기본 허용 유저는 `ce25f278-cdb4-4ccb-94a7-73d7396ce65c`다. 로그인한 사용자가 이 UUID이고, `building_id`가 해당 사용자의 소유 건물일 때만 성공한다. 운영 빌드에서는 이 API를 사용하지 않는다.
+실패 시:
 
-에러:
-
-```txt
-401: 로그인 필요 또는 토큰 만료
-403: 데모 허용 유저가 아니거나 해당 건물 접근 권한 없음
-404: building 없음
-500: 샘플 scene graph 파일 없음 또는 JSON 파싱 실패
+```json
+{
+  "task_id": "task-uuid",
+  "building_id": "building-uuid",
+  "status": "FAILED",
+  "progress_percent": 10,
+  "error_message": "Failed to request model server: ..."
+}
 ```
 
-### 업로드 화면에서 관리할 상태
+`status == COMPLETED`가 되면 프론트는 최종 scene graph를 아래 API로 다시 조회합니다.
 
-```txt
-idle: 파일 선택 전
-requestingUploadUrl: /data_transform/upload 요청 중
-uploadingFile: MinIO PUT 업로드 중
-completingUpload: /complete_upload 요청 중
-completed: graph_data 저장 완료
-failed: 업로드 또는 변환 실패
+```text
+GET /buildings/{building_id}/scene-graph
 ```
 
-## 추천 화면 플로우
+## Recommended Frontend Flows
 
-1. 회원가입 페이지
-   - 공통 입력: 이름, 직업, 이메일, 패스워드
-   - 시설관리자: Kakao 지도에서 건물 위치 선택
-   - 소방대원: Kakao 지도에서 관할 지구 선택
-   - Kakao 검색 결과의 좌표, 주소, 행정구역 정보를 회원가입 payload에 포함
-2. 로그인 페이지
-   - 로그인 성공 시 `access_token` 저장
-3. viewer component를 포함한 업무 페이지
-   - 진입 시 `GET /facility/workspace 또는 GET /emergency/workspace`
-   - `buildings`로 건물 목록/선택 UI 렌더링
-   - `default_scene_graph`가 있으면 즉시 뷰어에 렌더링
-   - 사용자가 다른 건물을 선택하면 `GET /facility/buildings/{building_id}/scene-graph 또는 GET /emergency/buildings/{building_id}/scene-graph`
-4. 시설관리자 업로드/변환
-   - 건물 선택 후 파일 선택
-   - `/data_transform/upload`로 `upload_url` 발급
-   - MinIO에 파일 `PUT`
-   - `/data_transform/{task_id}/complete_upload` 호출
-   - 완료 후 scene graph를 뷰어에 반영
+### 시설관리자 회원가입 후 건물 등록
 
-## 이번 스프린트에서 프론트가 신경 쓸 상태
-
-```txt
-loading: bootstrap 또는 scene graph 요청 중
-emptyBuildings: 접근 가능한 건물이 없음
-emptyGraph: 건물은 있으나 scene graph가 없음
-forbidden: 선택한 건물 접근 권한 없음
-expiredSession: 401 응답
-uploadingScan: 스캔 파일 업로드 중
-transformingScan: 모델 서버 변환 중
+```text
+1. POST /auth/signup
+2. POST /auth/login
+3. POST /facility/buildings
+4. GET /buildings
 ```
+
+### 소방대원 건물 정보 조회
+
+```text
+1. POST /auth/login
+2. GET /buildings
+3. 사용자가 건물 선택
+4. GET /buildings/{building_id}/scene-graph
+```
+
+### 시설관리자 파일 업로드 및 변환
+
+```text
+1. GET /buildings
+2. 사용자가 건물 선택
+3. POST /data-transforms/upload
+4. PUT upload_url to MinIO
+5. POST /data-transforms/{task_id}/complete-upload
+6. GET /data-transforms/{task_id} polling
+7. status == COMPLETED
+8. GET /buildings/{building_id}/scene-graph
+```
+
+## Error Status
+
+주요 에러는 아래 기준으로 처리합니다.
+
+```text
+400 Bad Request        잘못된 요청
+401 Unauthorized       토큰 없음 또는 만료/잘못된 토큰
+403 Forbidden          권한 없음
+404 Not Found          리소스 없음
+409 Conflict           중복 이메일, 이미 처리 중인 task 등
+422 Unprocessable      request body validation 실패
+500 Internal Error     서버 내부 설정/처리 오류
+502 Bad Gateway        모델 서버 호출 실패
+```
+
+## Notes
+
+- `/geo` API는 없습니다. 프론트가 Kakao 결과를 확정해서 백엔드에 보냅니다.
+- `/viewer`, `/emergency/workspace`, `/facility/workspace` API는 없습니다.
+- `GET /buildings`는 시설관리자와 소방대원이 공통으로 사용합니다.
+- `GET /data-transforms/{task_id}`는 task 상태만 반환합니다. graph JSON은 반환하지 않습니다.
+- 최종 scene graph는 항상 `GET /buildings/{building_id}/scene-graph`에서 가져옵니다.

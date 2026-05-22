@@ -1,44 +1,34 @@
 {$API_PUBLIC_DOMAIN} {
-	@allowed_origin {
-		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
-	}
-
-	@cors_preflight {
-		method OPTIONS
-		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
-	}
-
-	header @allowed_origin {
-		Access-Control-Allow-Origin "{http.request.header.Origin}"
-		Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
-		Access-Control-Allow-Headers "*"
-		Vary "Origin"
-	}
-
-	respond @cors_preflight "" 204
-
-	reverse_proxy host.docker.internal:8000 {
+	reverse_proxy host.docker.internal:{$BACKEND_PORT:8000} {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}
-		header_down -Access-Control-Allow-Origin
-		header_down -Access-Control-Allow-Credentials
-		header_down -Access-Control-Allow-Methods
-		header_down -Access-Control-Allow-Headers
-		header_down -Vary
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto {scheme}
 	}
 }
 
 {$MINIO_PUBLIC_DOMAIN} {
-	@allowed_origin {
-		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
-	}
+	@storage_frontend_origin header Origin {$FRONTEND_ORIGIN}
+	@storage_localhost_origin header Origin http://localhost:3000
+	@storage_loopback_origin header Origin http://127.0.0.1:3000
 
-	@cors_preflight {
+	@storage_preflight_frontend {
 		method OPTIONS
-		header_regexp Origin ^({$FRONTEND_ORIGIN}|http://localhost:3000|http://127\.0\.0\.1:3000)$
+		header Origin {$FRONTEND_ORIGIN}
 	}
 
-	header @allowed_origin {
+	@storage_preflight_localhost {
+		method OPTIONS
+		header Origin http://localhost:3000
+	}
+
+	@storage_preflight_loopback {
+		method OPTIONS
+		header Origin http://127.0.0.1:3000
+	}
+
+	header @storage_frontend_origin {
 		Access-Control-Allow-Origin "{http.request.header.Origin}"
 		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
 		Access-Control-Allow-Headers "*"
@@ -46,10 +36,31 @@
 		Vary "Origin"
 	}
 
-	respond @cors_preflight "" 204
+	header @storage_localhost_origin {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
+		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
+		Access-Control-Allow-Headers "*"
+		Access-Control-Expose-Headers "ETag"
+		Vary "Origin"
+	}
+
+	header @storage_loopback_origin {
+		Access-Control-Allow-Origin "{http.request.header.Origin}"
+		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
+		Access-Control-Allow-Headers "*"
+		Access-Control-Expose-Headers "ETag"
+		Vary "Origin"
+	}
+
+	respond @storage_preflight_frontend "" 204
+	respond @storage_preflight_localhost "" 204
+	respond @storage_preflight_loopback "" 204
 
 	reverse_proxy minio:9000 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto {scheme}
 	}
 }

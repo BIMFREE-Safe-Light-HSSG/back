@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 
-class ViewerBuildingResponse(BaseModel):
+class BuildingSummaryResponse(BaseModel):
     id: UUID
     name: str
     address: str | None
@@ -26,9 +26,3 @@ class SceneGraphResponse(BaseModel):
     graph_data_id: UUID
     created_at: datetime
     scene_graph: Any
-
-
-class ViewerBootstrapResponse(BaseModel):
-    buildings: list[ViewerBuildingResponse]
-    default_building_id: UUID | None
-    default_scene_graph: SceneGraphResponse | None

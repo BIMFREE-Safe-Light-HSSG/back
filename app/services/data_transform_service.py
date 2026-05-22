@@ -1,23 +1,17 @@
-import datetime as dt
-import hashlib
-import hmac
 import json
-import os
+import logging
 import re
 import uuid
 from typing import Any
-from urllib.parse import quote, urlsplit
 
-import httpx
-
-from app.core.database import db
+from app.integrations import storage
+from app.integrations.model_server import request_graph_data_from_model_server
+from app.repositories import buildings as buildings_repository
+from app.repositories import data_transform as data_transform_repository
 from app.schemas.data_transform import UploadRequest
 
 
-AWS_ALGORITHM = "AWS4-HMAC-SHA256"
-AWS_SERVICE = "s3"
-DEFAULT_REGION = "us-east-1"
-MAX_PRESIGNED_URL_EXPIRES_SECONDS = 604_800
+logger = logging.getLogger("app.services.data_transform")
 
 
 class BuildingNotFoundError(Exception):
@@ -32,98 +26,12 @@ class InvalidUploaderJobError(Exception):
     pass
 
 
-class StorageConfigurationError(Exception):
-    pass
-
-
 class TaskNotFoundError(Exception):
     pass
 
 
 class InvalidTaskStatusError(Exception):
     pass
-
-
-class ModelServerError(Exception):
-    pass
-
-
-def _env(name: str, default: str | None = None) -> str:
-    value = os.getenv(name, default)
-    if value is None:
-        raise StorageConfigurationError(f"{name} is not configured.")
-
-    value = value.strip()
-    if not value:
-        if default is not None:
-            return default
-        raise StorageConfigurationError(f"{name} is not configured.")
-
-    return value
-
-
-def _bucket_name() -> str:
-    return _env("MINIO_BUCKET_NAME", "scan-files")
-
-
-def _model_server_transform_url() -> str:
-    endpoint = os.getenv("MODEL_SERVER_TRANSFORM_ENDPOINT")
-    if endpoint and endpoint.strip():
-        return endpoint.strip()
-
-    base_url = _env("MODEL_SERVER_URL", "http://localhost:8001").rstrip("/")
-    path = _env("MODEL_SERVER_TRANSFORM_PATH", "/transform")
-    if not path.startswith("/"):
-        path = f"/{path}"
-
-    return f"{base_url}{path}"
-
-
-def _model_server_timeout() -> float:
-    raw_timeout = _env("MODEL_SERVER_TIMEOUT_SECONDS", "300")
-    try:
-        timeout = float(raw_timeout)
-    except ValueError as exc:
-        raise StorageConfigurationError(
-            "MODEL_SERVER_TIMEOUT_SECONDS must be a number."
-        ) from exc
-
-    if timeout <= 0:
-        raise StorageConfigurationError(
-            "MODEL_SERVER_TIMEOUT_SECONDS must be greater than 0."
-        )
-
-    return timeout
-
-
-def _public_endpoint() -> str:
-    endpoint = os.getenv("MINIO_PUBLIC_ENDPOINT")
-    if endpoint and endpoint.strip():
-        return endpoint.strip().rstrip("/")
-
-    public_domain = _env("MINIO_PUBLIC_DOMAIN", "bimfree-minio.duckdns.org").rstrip("/")
-    if public_domain.startswith(("http://", "https://")):
-        return public_domain.rstrip("/")
-
-    scheme = _env("MINIO_PUBLIC_SCHEME", "https")
-    return f"{scheme}://{public_domain}"
-
-
-def _expires_in() -> int:
-    raw_expires = _env("MINIO_PRESIGNED_URL_EXPIRES_SECONDS", "900")
-    try:
-        expires = int(raw_expires)
-    except ValueError as exc:
-        raise StorageConfigurationError(
-            "MINIO_PRESIGNED_URL_EXPIRES_SECONDS must be an integer."
-        ) from exc
-
-    if expires < 1 or expires > MAX_PRESIGNED_URL_EXPIRES_SECONDS:
-        raise StorageConfigurationError(
-            "MINIO_PRESIGNED_URL_EXPIRES_SECONDS must be between 1 and 604800."
-        )
-
-    return expires
 
 
 def _safe_filename(filename: str) -> str:
@@ -136,92 +44,6 @@ def _safe_filename(filename: str) -> str:
     return safe_name[:255]
 
 
-def _sign(key: bytes, message: str) -> bytes:
-    return hmac.new(key, message.encode("utf-8"), hashlib.sha256).digest()
-
-
-def _signing_key(secret_key: str, date_stamp: str, region: str) -> bytes:
-    date_key = _sign(f"AWS4{secret_key}".encode("utf-8"), date_stamp)
-    region_key = _sign(date_key, region)
-    service_key = _sign(region_key, AWS_SERVICE)
-    return _sign(service_key, "aws4_request")
-
-
-def _canonical_query(params: dict[str, str]) -> str:
-    return "&".join(
-        f"{quote(key, safe='-_.~')}={quote(value, safe='-_.~')}"
-        for key, value in sorted(params.items())
-    )
-
-
-def _generate_presigned_put_url(
-    bucket_name: str,
-    object_key: str,
-    expires_in: int,
-) -> str:
-    access_key = _env("MINIO_ROOT_USER", "minioadmin")
-    secret_key = _env("MINIO_ROOT_PASSWORD", "minioadmin123")
-    region = _env("MINIO_REGION", DEFAULT_REGION)
-    endpoint = _public_endpoint()
-    parsed_endpoint = urlsplit(endpoint)
-
-    if not parsed_endpoint.scheme or not parsed_endpoint.netloc:
-        raise StorageConfigurationError(
-            "MinIO public endpoint must include scheme and host."
-        )
-
-    now = dt.datetime.now(dt.UTC)
-    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
-    date_stamp = now.strftime("%Y%m%d")
-    credential_scope = f"{date_stamp}/{region}/{AWS_SERVICE}/aws4_request"
-    signed_headers = "host"
-
-    path_prefix = parsed_endpoint.path.rstrip("/")
-    canonical_uri = (
-        f"{path_prefix}/{quote(bucket_name, safe='')}/{quote(object_key, safe='/-_.~')}"
-    )
-    credential = f"{access_key}/{credential_scope}"
-    query_params = {
-        "X-Amz-Algorithm": AWS_ALGORITHM,
-        "X-Amz-Credential": credential,
-        "X-Amz-Date": amz_date,
-        "X-Amz-Expires": str(expires_in),
-        "X-Amz-SignedHeaders": signed_headers,
-    }
-    canonical_query = _canonical_query(query_params)
-    canonical_headers = f"host:{parsed_endpoint.netloc}\n"
-    canonical_request = "\n".join(
-        [
-            "PUT",
-            canonical_uri,
-            canonical_query,
-            canonical_headers,
-            signed_headers,
-            "UNSIGNED-PAYLOAD",
-        ]
-    )
-    hashed_request = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
-    string_to_sign = "\n".join(
-        [
-            AWS_ALGORITHM,
-            amz_date,
-            credential_scope,
-            hashed_request,
-        ]
-    )
-    signature = hmac.new(
-        _signing_key(secret_key, date_stamp, region),
-        string_to_sign.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    final_query = f"{canonical_query}&X-Amz-Signature={signature}"
-    return (
-        f"{parsed_endpoint.scheme}://{parsed_endpoint.netloc}"
-        f"{canonical_uri}?{final_query}"
-    )
-
-
 async def _get_owned_building(
     building_id: uuid.UUID,
     current_user: dict[str, Any],
@@ -229,23 +51,11 @@ async def _get_owned_building(
     if current_user.get("job") != "FACILITY_MANAGER":
         raise InvalidUploaderJobError
 
-    building = await db.fetch_one(
-        """
-        SELECT id
-        FROM buildings
-        WHERE id = $1
-        """,
-        building_id,
-    )
+    building = await buildings_repository.get_building_by_id(building_id)
     if building is None:
         raise BuildingNotFoundError
 
-    owned_building = await db.fetch_one(
-        """
-        SELECT id
-        FROM buildings
-        WHERE id = $1 AND owner_id = $2
-        """,
+    owned_building = await buildings_repository.get_owned_building_by_id(
         building_id,
         current_user["id"],
     )
@@ -265,18 +75,13 @@ async def create_upload_request(
     await _get_owned_building(payload.building_id, current_user)
 
     task_id = uuid.uuid4()
-    bucket_name = _bucket_name()
+    bucket_name = storage.bucket_name()
     object_key = f"data-transform/{task_id}/{_safe_filename(payload.filename)}"
     scan_file_path = f"s3://{bucket_name}/{object_key}"
-    expires_in = _expires_in()
-    upload_url = _generate_presigned_put_url(bucket_name, object_key, expires_in)
+    expires_in = storage.presigned_url_expires_in()
+    upload_url = storage.generate_presigned_put_url(bucket_name, object_key, expires_in)
 
-    task = await db.fetch_one(
-        """
-        INSERT INTO data_transform (id, building_id, status, scan_file_path)
-        VALUES ($1, $2, 'PENDING', $3)
-        RETURNING id, status, scan_file_path
-        """,
+    task = await data_transform_repository.create_task(
         task_id,
         payload.building_id,
         scan_file_path,
@@ -284,6 +89,14 @@ async def create_upload_request(
 
     if task is None:
         raise RuntimeError("Failed to create data transform task.")
+
+    logger.info(
+        "upload_task_created task_id=%s building_id=%s user_id=%s object_key=%s",
+        task["id"],
+        payload.building_id,
+        current_user["id"],
+        object_key,
+    )
 
     return {
         "task_id": task["id"],
@@ -300,97 +113,50 @@ async def create_upload_request(
     }
 
 
-def _scan_file_location(scan_file_path: str) -> tuple[str, str]:
-    if not scan_file_path.startswith("s3://"):
-        raise StorageConfigurationError("scan_file_path must start with s3://.")
-
-    bucket_and_key = scan_file_path.removeprefix("s3://")
-    bucket_name, separator, object_key = bucket_and_key.partition("/")
-    if not bucket_name or separator != "/" or not object_key:
-        raise StorageConfigurationError(
-            "scan_file_path must include bucket and object key."
-        )
-
-    return bucket_name, object_key
-
-
-def _extract_graph_data(response_json: Any) -> Any:
-    if not isinstance(response_json, dict):
-        return response_json
-
-    for key in ("graph_data", "graph_json", "data", "result"):
-        if key in response_json:
-            return response_json[key]
-
-    return response_json
-
-
-def _decode_graph_json(graph_json: Any) -> Any:
-    if isinstance(graph_json, str):
-        return json.loads(graph_json)
-
-    return graph_json
+def _task_response(task: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "task_id": task["id"],
+        "building_id": task["building_id"],
+        "status": task["status"],
+        "progress_percent": task["progress_percent"],
+        "error_message": task["error_message"],
+    }
 
 
 async def _update_task_status(
     task_id: uuid.UUID,
     status: str,
+    progress_percent: int,
     error_message: str | None,
-) -> None:
-    await db.execute(
-        """
-        UPDATE data_transform
-        SET status = $1,
-            error_message = $2,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $3
-        """,
-        status,
-        error_message,
+) -> dict[str, Any] | None:
+    return await data_transform_repository.update_task_status(
         task_id,
+        status,
+        progress_percent,
+        error_message,
     )
 
 
-async def _request_graph_data_from_model_server(task: dict[str, Any]) -> Any:
-    bucket_name, object_key = _scan_file_location(task["scan_file_path"])
-    payload = {
-        "task_id": str(task["id"]),
-        "building_id": str(task["building_id"]) if task["building_id"] else None,
-        "scan_file_path": task["scan_file_path"],
-        "bucket_name": bucket_name,
-        "object_key": object_key,
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=_model_server_timeout()) as client:
-            response = await client.post(_model_server_transform_url(), json=payload)
-            response.raise_for_status()
-            response_json = response.json()
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text[:500]
-        raise ModelServerError(
-            f"Model server returned {exc.response.status_code}: {detail}"
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise ModelServerError(f"Failed to request model server: {exc}") from exc
-    except ValueError as exc:
-        raise ModelServerError("Model server response must be valid JSON.") from exc
-
-    return _extract_graph_data(response_json)
-
-
-async def complete_upload(
+async def get_task_status(
     task_id: uuid.UUID,
     current_user: dict[str, Any],
 ) -> dict[str, Any]:
-    task = await db.fetch_one(
-        """
-        SELECT id, building_id, status, scan_file_path
-        FROM data_transform
-        WHERE id = $1
-        """,
-        task_id,
-    )
+    task = await data_transform_repository.get_task(task_id)
+    if task is None:
+        raise TaskNotFoundError
+
+    if task["building_id"] is None:
+        raise BuildingNotFoundError
+
+    await _get_owned_building(task["building_id"], current_user)
+    return _task_response(task)
+
+
+async def start_upload_processing(
+    task_id: uuid.UUID,
+    current_user: dict[str, Any],
+) -> dict[str, Any]:
+    task = await data_transform_repository.get_task(task_id)
     if task is None:
         raise TaskNotFoundError
 
@@ -402,53 +168,61 @@ async def complete_upload(
     if task["status"] == "PROCESSING":
         raise InvalidTaskStatusError
 
-    existing_graph = await db.fetch_one(
-        """
-        SELECT id, graph_json::text AS graph_json
-        FROM graph_data
-        WHERE data_transform_id = $1
-        ORDER BY created_at DESC
-        LIMIT 1
-        """,
-        task_id,
-    )
-    if task["status"] == "COMPLETED" and existing_graph is not None:
-        return {
-            "message": "Upload was already completed.",
-            "task_id": task["id"],
-            "status": task["status"],
-            "graph_data_id": existing_graph["id"],
-            "graph_data": _decode_graph_json(existing_graph["graph_json"]),
-        }
+    if task["status"] == "COMPLETED":
+        return _task_response(task)
 
-    await _update_task_status(task_id, "PROCESSING", None)
+    updated_task = await _update_task_status(task_id, "PROCESSING", 10, None)
+    if updated_task is None:
+        raise TaskNotFoundError
+
+    logger.info(
+        "upload_processing_queued task_id=%s building_id=%s user_id=%s",
+        task["id"],
+        task["building_id"],
+        current_user["id"],
+    )
+    return _task_response(updated_task)
+
+
+async def process_upload_task(task_id: uuid.UUID) -> None:
+    task = await data_transform_repository.get_task(task_id)
+    if task is None:
+        logger.warning("upload_processing_skipped reason=missing_task task_id=%s", task_id)
+        return
+
+    if task["building_id"] is None:
+        await _update_task_status(task_id, "FAILED", 0, "Building not found.")
+        return
 
     try:
-        graph_data = await _request_graph_data_from_model_server(task)
-        graph_row = await db.fetch_one(
-            """
-            INSERT INTO graph_data (building_id, data_transform_id, graph_json)
-            VALUES ($1, $2, $3::jsonb)
-            RETURNING id, graph_json::text AS graph_json
-            """,
+        graph_data = await request_graph_data_from_model_server(task)
+        graph_row = await data_transform_repository.insert_graph_data(
             task["building_id"],
             task_id,
-            json.dumps(graph_data),
+            json.dumps(graph_data, ensure_ascii=False),
         )
     except Exception as exc:
-        await _update_task_status(task_id, "FAILED", str(exc))
-        raise
+        logger.exception(
+            "upload_processing_failed task_id=%s building_id=%s",
+            task["id"],
+            task["building_id"],
+        )
+        await _update_task_status(task_id, "FAILED", task["progress_percent"], str(exc))
+        return
 
     if graph_row is None:
-        await _update_task_status(task_id, "FAILED", "Failed to save graph data.")
-        raise RuntimeError("Failed to save graph data.")
+        await _update_task_status(task_id, "FAILED", 10, "Failed to save graph data.")
+        logger.error(
+            "upload_processing_failed reason=graph_save_failed task_id=%s building_id=%s",
+            task["id"],
+            task["building_id"],
+        )
+        return
 
-    await _update_task_status(task_id, "COMPLETED", None)
-
-    return {
-        "message": "Upload completed and graph data saved successfully.",
-        "task_id": task["id"],
-        "status": "COMPLETED",
-        "graph_data_id": graph_row["id"],
-        "graph_data": _decode_graph_json(graph_row["graph_json"]),
-    }
+    await _update_task_status(task_id, "COMPLETED", 100, None)
+    logger.info(
+        "upload_processing_completed task_id=%s building_id=%s graph_data_id=%s",
+        task["id"],
+        task["building_id"],
+        graph_row["id"],
+    )

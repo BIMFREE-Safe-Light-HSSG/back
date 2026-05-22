@@ -1,12 +1,32 @@
+import logging
 from typing import Any
 
-from app.core.database import db
-from app.schemas.auth import BuildingLocationRequest
-from app.services.auth_service import resolve_building_location
+from app.repositories import buildings as buildings_repository
+from app.schemas.facility import CreateBuildingRequest
+
+logger = logging.getLogger("app.services.facility")
 
 
 class FacilityManagerRequiredError(Exception):
     pass
+
+
+async def resolve_building_location(
+    location_payload: CreateBuildingRequest,
+) -> dict[str, Any]:
+    return {
+        "latitude": location_payload.latitude,
+        "longitude": location_payload.longitude,
+        "address": location_payload.address,
+        "building_name": location_payload.place_name,
+        "provider": location_payload.provider,
+        "provider_place_id": location_payload.provider_place_id,
+        "district_code": location_payload.district_code,
+        "district_name": location_payload.district_name,
+        "region_1depth_name": location_payload.region_1depth_name,
+        "region_2depth_name": location_payload.region_2depth_name,
+        "region_3depth_name": location_payload.region_3depth_name,
+    }
 
 
 def _building_from_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -28,63 +48,23 @@ def _building_from_row(row: dict[str, Any]) -> dict[str, Any]:
 
 async def create_managed_building(
     current_user: dict[str, Any],
-    payload: BuildingLocationRequest,
+    payload: CreateBuildingRequest,
 ) -> dict[str, Any]:
     if current_user.get("job") != "FACILITY_MANAGER":
         raise FacilityManagerRequiredError
 
     location = await resolve_building_location(payload)
-    building_name = (
-        location["building_name"]
-        or location["address"]
-        or "Registered building"
-    )
-
-    building = await db.fetch_one(
-        """
-        INSERT INTO buildings (
-            owner_id,
-            name,
-            address,
-            provider,
-            provider_place_id,
-            latitude,
-            longitude,
-            district_code,
-            district_name,
-            region_1depth_name,
-            region_2depth_name,
-            region_3depth_name
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-        RETURNING
-            id,
-            name,
-            address,
-            provider,
-            provider_place_id,
-            latitude,
-            longitude,
-            district_code,
-            district_name,
-            region_1depth_name,
-            region_2depth_name,
-            region_3depth_name
-        """,
+    building = await buildings_repository.create_managed_building(
         current_user["id"],
-        building_name,
-        location["address"],
-        location["provider"],
-        location["provider_place_id"],
-        location["latitude"],
-        location["longitude"],
-        location["district_code"],
-        location["district_name"],
-        location["region_1depth_name"],
-        location["region_2depth_name"],
-        location["region_3depth_name"],
+        location,
     )
     if building is None:
         raise RuntimeError("Failed to create building.")
 
+    logger.info(
+        "building_created user_id=%s building_id=%s district_code=%s",
+        current_user["id"],
+        building["id"],
+        building["district_code"],
+    )
     return _building_from_row(building)

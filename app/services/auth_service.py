@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import hmac
 import os
 import secrets
@@ -6,16 +7,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-import asyncpg
 from jose import JWTError, jwt
 
-from app.core.database import db
+from app.repositories import users as users_repository
+from app.repositories.users import DuplicateEmailError
 from app.schemas.auth import JobType, LoginRequest, SignupRequest
-from app.services.geo_service import (
-    GeoConfigurationError,
-    fallback_location_from_address,
-    reverse_geocode,
-)
 
 
 HASH_ALGORITHM = "pbkdf2_sha256"
@@ -23,6 +19,7 @@ PBKDF2_ITERATIONS = 600_000
 JWT_ALGORITHM = "HS256"
 DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES = 60
 DEFAULT_JWT_SECRET_KEY = "change-this-jwt-secret-key"
+logger = logging.getLogger("app.services.auth")
 
 
 class EmailAlreadyExistsError(Exception):
@@ -41,53 +38,6 @@ class InvalidAccessTokenError(Exception):
     pass
 
 
-USER_PROFILE_SELECT = """
-SELECT
-    u.id,
-    u.email,
-    u.password_hash,
-    u.name,
-    u.job,
-    u.jurisdiction_code,
-    u.jurisdiction_name,
-    u.jurisdiction_latitude,
-    u.jurisdiction_longitude,
-    u.created_at,
-    b.id AS building_id,
-    b.name AS building_name,
-    b.address AS building_address,
-    b.provider AS building_provider,
-    b.provider_place_id AS building_provider_place_id,
-    b.latitude AS building_latitude,
-    b.longitude AS building_longitude,
-    b.district_code AS building_district_code,
-    b.district_name AS building_district_name,
-    b.region_1depth_name AS building_region_1depth_name,
-    b.region_2depth_name AS building_region_2depth_name,
-    b.region_3depth_name AS building_region_3depth_name
-FROM users u
-LEFT JOIN LATERAL (
-    SELECT
-        id,
-        name,
-        address,
-        provider,
-        provider_place_id,
-        latitude,
-        longitude,
-        district_code,
-        district_name,
-        region_1depth_name,
-        region_2depth_name,
-        region_3depth_name
-    FROM buildings
-    WHERE owner_id = u.id
-    ORDER BY created_at DESC
-    LIMIT 1
-) b ON TRUE
-"""
-
-
 def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
     user = {
         "id": row["id"],
@@ -100,105 +50,19 @@ def _user_profile_from_row(row: dict[str, Any]) -> dict[str, Any]:
         user["jurisdiction"] = {
             "code": row.get("jurisdiction_code"),
             "name": row.get("jurisdiction_name"),
-            "latitude": row.get("jurisdiction_latitude"),
-            "longitude": row.get("jurisdiction_longitude"),
         }
     else:
         user["jurisdiction"] = None
 
-    if (
-        row.get("building_id") is not None
-        and row.get("building_latitude") is not None
-        and row.get("building_longitude") is not None
-    ):
-        user["building"] = {
-            "id": row["building_id"],
-            "name": row["building_name"],
-            "address": row["building_address"],
-            "provider": row["building_provider"],
-            "provider_place_id": row["building_provider_place_id"],
-            "latitude": row["building_latitude"],
-            "longitude": row["building_longitude"],
-            "district_code": row["building_district_code"],
-            "district_name": row["building_district_name"],
-            "region_1depth_name": row["building_region_1depth_name"],
-            "region_2depth_name": row["building_region_2depth_name"],
-            "region_3depth_name": row["building_region_3depth_name"],
-        }
-    else:
-        user["building"] = None
-
     return user
-
-
-async def resolve_building_location(
-    location_payload: Any,
-) -> dict[str, Any]:
-    if location_payload.district_code and location_payload.district_name:
-        return {
-            "latitude": location_payload.latitude,
-            "longitude": location_payload.longitude,
-            "address": location_payload.address,
-            "building_name": location_payload.place_name,
-            "provider": location_payload.provider,
-            "provider_place_id": location_payload.provider_place_id,
-            "district_code": location_payload.district_code,
-            "district_name": location_payload.district_name,
-            "region_1depth_name": location_payload.region_1depth_name,
-            "region_2depth_name": location_payload.region_2depth_name,
-            "region_3depth_name": location_payload.region_3depth_name,
-        }
-
-    try:
-        location = await reverse_geocode(
-            location_payload.latitude,
-            location_payload.longitude,
-        )
-    except GeoConfigurationError:
-        if not location_payload.address:
-            raise
-
-        return fallback_location_from_address(
-            location_payload.latitude,
-            location_payload.longitude,
-            location_payload.address,
-        )
-
-    if location["address"] is None and location_payload.address:
-        location["address"] = location_payload.address
-    if location["building_name"] is None and location_payload.place_name:
-        location["building_name"] = location_payload.place_name
-    location["provider"] = location_payload.provider or location["provider"]
-    location["provider_place_id"] = location_payload.provider_place_id
-
-    return location
 
 
 async def _resolve_jurisdiction(payload: SignupRequest) -> dict[str, Any]:
     if payload.jurisdiction is None:
         raise RuntimeError("jurisdiction is required.")
 
-    if payload.jurisdiction.code and payload.jurisdiction.name:
-        return {
-            "latitude": payload.jurisdiction.latitude,
-            "longitude": payload.jurisdiction.longitude,
-            "district_code": payload.jurisdiction.code,
-            "district_name": payload.jurisdiction.name,
-        }
-
-    if payload.jurisdiction.latitude is not None and payload.jurisdiction.longitude is not None:
-        return await reverse_geocode(
-            payload.jurisdiction.latitude,
-            payload.jurisdiction.longitude,
-        )
-
-    if not payload.jurisdiction.name:
-        raise RuntimeError("jurisdiction name is required when coordinates are omitted.")
-
     return {
-        "latitude": None,
-        "longitude": None,
-        "district_code": payload.jurisdiction.code or payload.jurisdiction.name,
+        "district_code": payload.jurisdiction.code,
         "district_name": payload.jurisdiction.name,
     }
 
@@ -261,13 +125,7 @@ async def get_user_from_access_token(token: str) -> dict[str, Any]:
     except (TypeError, ValueError) as exc:
         raise InvalidAccessTokenError from exc
 
-    user = await db.fetch_one(
-        f"""
-        {USER_PROFILE_SELECT}
-        WHERE u.id = $1
-        """,
-        user_id,
-    )
+    user = await users_repository.get_profile_by_id(user_id)
     if user is None:
         raise InvalidAccessTokenError
 
@@ -304,128 +162,47 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 async def signup(payload: SignupRequest) -> dict[str, Any]:
-    existing_user = await db.fetch_one(
-        "SELECT id FROM users WHERE email = $1",
-        payload.email,
-    )
-    if existing_user is not None:
+    if await users_repository.email_exists(payload.email):
+        logger.warning("signup_rejected reason=duplicate_email job=%s", payload.job.value)
         raise EmailAlreadyExistsError
 
     password_hash = hash_password(payload.password)
-    building_location = None
     jurisdiction = None
-    if payload.job == JobType.FACILITY_MANAGER:
-        if payload.building_location is None:
-            raise RuntimeError("building_location is required.")
-
-        building_location = await resolve_building_location(payload.building_location)
     if payload.job == JobType.FIREFIGHTER:
         jurisdiction = await _resolve_jurisdiction(payload)
 
-    jurisdiction_code = jurisdiction["district_code"] if jurisdiction else None
-    jurisdiction_name = jurisdiction["district_name"] if jurisdiction else None
-    jurisdiction_latitude = jurisdiction["latitude"] if jurisdiction else None
-    jurisdiction_longitude = jurisdiction["longitude"] if jurisdiction else None
-
-    async with db.acquire() as conn:
-        async with conn.transaction():
-            try:
-                user = await conn.fetchrow(
-                    """
-                    INSERT INTO users (
-                        email,
-                        password_hash,
-                        name,
-                        job,
-                        jurisdiction_code,
-                        jurisdiction_name,
-                        jurisdiction_latitude,
-                        jurisdiction_longitude
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    RETURNING id
-                    """,
-                    payload.email,
-                    password_hash,
-                    payload.name,
-                    payload.job.value,
-                    jurisdiction_code,
-                    jurisdiction_name,
-                    jurisdiction_latitude,
-                    jurisdiction_longitude,
-                )
-            except asyncpg.UniqueViolationError as exc:
-                raise EmailAlreadyExistsError from exc
-
-            if user is None:
-                raise RuntimeError("Failed to create user.")
-
-            if payload.job == JobType.FACILITY_MANAGER and building_location is not None:
-                building_name = (
-                    building_location["building_name"]
-                    or building_location["address"]
-                    or "Registered building"
-                )
-                await conn.fetchrow(
-                    """
-                    INSERT INTO buildings (
-                        owner_id,
-                        name,
-                        address,
-                        provider,
-                        provider_place_id,
-                        latitude,
-                        longitude,
-                        district_code,
-                        district_name,
-                        region_1depth_name,
-                        region_2depth_name,
-                        region_3depth_name
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    RETURNING id
-                    """,
-                    user["id"],
-                    building_name,
-                    building_location["address"],
-                    building_location["provider"],
-                    building_location["provider_place_id"],
-                    building_location["latitude"],
-                    building_location["longitude"],
-                    building_location["district_code"],
-                    building_location["district_name"],
-                    building_location["region_1depth_name"],
-                    building_location["region_2depth_name"],
-                    building_location["region_3depth_name"],
-                )
-
-            profile = await conn.fetchrow(
-                f"""
-                {USER_PROFILE_SELECT}
-                WHERE u.id = $1
-                """,
-                user["id"],
-            )
+    try:
+        profile = await users_repository.create_user_profile(
+            email=payload.email,
+            password_hash=password_hash,
+            name=payload.name,
+            job=payload.job.value,
+            jurisdiction=jurisdiction,
+        )
+    except DuplicateEmailError as exc:
+        raise EmailAlreadyExistsError from exc
 
     if profile is None:
         raise RuntimeError("Failed to load created user.")
 
-    return _user_profile_from_row(dict(profile))
+    user_profile = _user_profile_from_row(profile)
+    logger.info(
+        "signup_completed user_id=%s job=%s",
+        user_profile["id"],
+        user_profile.get("job"),
+    )
+    return user_profile
 
 
 async def login(payload: LoginRequest) -> dict[str, Any]:
-    user = await db.fetch_one(
-        f"""
-        {USER_PROFILE_SELECT}
-        WHERE u.email = $1
-        """,
-        payload.email,
-    )
+    user = await users_repository.get_profile_by_email(payload.email)
 
     if user is None or not verify_password(payload.password, user["password_hash"]):
+        logger.warning("login_rejected reason=invalid_credentials")
         raise InvalidCredentialsError
 
     user = _user_profile_from_row(user)
+    logger.info("login_completed user_id=%s job=%s", user["id"], user.get("job"))
     return {
         "access_token": create_access_token(user),
         "token_type": "bearer",

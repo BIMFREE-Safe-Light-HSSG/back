@@ -15,7 +15,10 @@ __pycache__/
 
 # Logs
 *.log
-logs/
+logs/*
+!logs/.gitkeep
+!logs/**/
+!logs/**/.gitkeep
 
 # Database
 *.db
@@ -75,3 +78,5 @@ tmp/
 temp/
 
 .backend.pid
+
+AGENTS.md

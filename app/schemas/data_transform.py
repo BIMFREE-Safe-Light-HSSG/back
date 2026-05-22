@@ -1,11 +1,11 @@
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class UploadRequest(BaseModel):
-    building_id: UUID | None = None
+    building_id: UUID
     filename: str = Field(..., min_length=1, max_length=255)
     content_type: str = Field(
         default="application/octet-stream",
@@ -48,9 +48,9 @@ class UploadResponse(BaseModel):
     headers: dict[str, str]
 
 
-class CompleteUploadResponse(BaseModel):
-    message: str
+class DataTransformTaskResponse(BaseModel):
     task_id: UUID
+    building_id: UUID
     status: str
-    graph_data_id: UUID
-    graph_data: Any
+    progress_percent: int
+    error_message: str | None

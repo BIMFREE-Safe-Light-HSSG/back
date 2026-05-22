@@ -7,24 +7,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.buildings import router as buildings_router
 from app.api.data_transform import router as data_transform_router
-from app.api.emergency import router as emergency_router
 from app.api.facility import router as facility_router
-from app.api.geo import router as geo_router
-from app.api.viewer import router as viewer_router
-from app.api.dev import (
-    data_transform_router as dev_data_transform_router,
-    upload_test_router as dev_upload_test_router,
-    users_router as dev_users_router,
-)
 from app.core.database import db
+from app.core.logging import configure_logging
 
 
 load_dotenv()
+configure_logging()
 
 
 def _dev_routes_enabled() -> bool:
-    return os.getenv("ENABLE_DEV_ROUTES", "true").strip().lower() in {
+    return os.getenv("ENABLE_DEV_ROUTES", "false").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -55,7 +50,6 @@ def _cors_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.connect()
-    await db.init_schema()
 
     try:
         yield
@@ -64,7 +58,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title=os.getenv("APP_NAME", "BIMFree Backend"),
+    title=os.getenv("APP_NAME", "SuperSafeTwin Backend"),
     lifespan=lifespan,
 )
 
@@ -77,16 +71,15 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(buildings_router)
 app.include_router(data_transform_router)
-app.include_router(emergency_router)
 app.include_router(facility_router)
-app.include_router(geo_router)
-app.include_router(viewer_router)
 
 if _dev_routes_enabled():
-    app.include_router(dev_data_transform_router)
-    app.include_router(dev_upload_test_router)
-    app.include_router(dev_users_router)
+    from dev.api import routers as dev_routers
+
+    for dev_router in dev_routers:
+        app.include_router(dev_router)
 
 
 @app.get("/health", tags=["health"])

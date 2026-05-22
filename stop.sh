@@ -4,13 +4,54 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="${PROJECT_DIR}/.backend.pid"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
-BACKEND_APP="${BACKEND_APP:-app.main:app}"
 
 cd "$PROJECT_DIR"
 
+load_env_file() {
+  local env_file="$1"
+  local line key value
+
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#${line%%[![:space:]]*}}"
+    line="${line%${line##*[![:space:]]}}"
+
+    if [ -z "$line" ] || [[ "$line" == \#* ]] || [[ "$line" != *=* ]]; then
+      continue
+    fi
+
+    key="${line%%=*}"
+    value="${line#*=}"
+    key="${key#${key%%[![:space:]]*}}"
+    key="${key%${key##*[![:space:]]}}"
+    value="${value#${value%%[![:space:]]*}}"
+    value="${value%${value##*[![:space:]]}}"
+
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "[WARN] .env의 잘못된 키를 건너뜁니다: $key"
+      continue
+    fi
+
+    if [ -n "${!key+x}" ]; then
+      continue
+    fi
+
+
+    export "$key=$value"
+  done < "$env_file"
+}
+
+ENV_FILE="${PROJECT_DIR}/.env"
+load_env_file "$ENV_FILE"
+
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+BACKEND_APP="${BACKEND_APP:-app.main:app}"
+
 echo "========================================"
-echo " BIMFree Backend Stop Script"
+echo " SuperSafeTwin Backend Stop Script"
 echo "========================================"
 
 terminate_pid_tree() {
