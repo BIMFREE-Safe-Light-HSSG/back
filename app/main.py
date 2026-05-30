@@ -28,18 +28,19 @@ def _dev_routes_enabled() -> bool:
 
 
 def _cors_origins() -> list[str]:
-    raw_origins = os.getenv("CORS_ORIGINS")
-    if raw_origins:
-        return [
-            origin.strip().rstrip("/")
-            for origin in raw_origins.split(",")
-            if origin.strip()
-        ]
-
     origins = {
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     }
+
+    raw_origins = os.getenv("CORS_ORIGINS")
+    if raw_origins:
+        origins.update(
+            origin.strip().rstrip("/")
+            for origin in raw_origins.split(",")
+            if origin.strip()
+        )
+
     frontend_origin = os.getenv("FRONTEND_ORIGIN")
     if frontend_origin and frontend_origin.strip():
         origins.add(frontend_origin.strip().rstrip("/"))
