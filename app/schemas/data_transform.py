@@ -1,7 +1,7 @@
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class UploadRequest(BaseModel):
@@ -49,6 +49,31 @@ class UploadResponse(BaseModel):
 
 
 class DataTransformTaskResponse(BaseModel):
+    task_id: UUID
+    building_id: UUID
+    status: str
+    progress_percent: int
+    error_message: str | None
+
+
+class ModelTransformUpdateRequest(BaseModel):
+    task_id: UUID
+    status: Literal["PROCESSING", "COMPLETED", "FAILED"]
+    progress_percent: int = Field(..., ge=0, le=100)
+    error_message: str | None = None
+    graph_data: Any | None = None
+
+    @model_validator(mode="after")
+    def validate_update_payload(self) -> "ModelTransformUpdateRequest":
+        if self.status == "COMPLETED" and self.graph_data is None:
+            raise ValueError("graph_data is required when status is COMPLETED")
+        if self.status == "FAILED" and not self.error_message:
+            raise ValueError("error_message is required when status is FAILED")
+
+        return self
+
+
+class ModelTransformUpdateResponse(BaseModel):
     task_id: UUID
     building_id: UUID
     status: str

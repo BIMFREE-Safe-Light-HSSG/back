@@ -5,10 +5,10 @@ import uuid
 from typing import Any
 
 from app.integrations import storage
-from app.integrations.model_server import request_graph_data_from_model_server
+from app.integrations.model_server import submit_transform_task_to_model_server
 from app.repositories import buildings as buildings_repository
 from app.repositories import data_transform as data_transform_repository
-from app.schemas.data_transform import UploadRequest
+from app.schemas.data_transform import ModelTransformUpdateRequest, UploadRequest
 
 
 logger = logging.getLogger("app.services.data_transform")
@@ -31,6 +31,10 @@ class TaskNotFoundError(Exception):
 
 
 class InvalidTaskStatusError(Exception):
+    pass
+
+
+class InvalidModelUpdateError(Exception):
     pass
 
 
@@ -195,34 +199,92 @@ async def process_upload_task(task_id: uuid.UUID) -> None:
         return
 
     try:
-        graph_data = await request_graph_data_from_model_server(task)
-        graph_row = await data_transform_repository.insert_graph_data(
-            task["building_id"],
-            task_id,
-            json.dumps(graph_data, ensure_ascii=False),
-        )
+        await submit_transform_task_to_model_server(task)
     except Exception as exc:
         logger.exception(
-            "upload_processing_failed task_id=%s building_id=%s",
+            "upload_processing_submit_failed task_id=%s building_id=%s",
             task["id"],
             task["building_id"],
         )
         await _update_task_status(task_id, "FAILED", task["progress_percent"], str(exc))
         return
 
-    if graph_row is None:
-        await _update_task_status(task_id, "FAILED", 10, "Failed to save graph data.")
-        logger.error(
-            "upload_processing_failed reason=graph_save_failed task_id=%s building_id=%s",
-            task["id"],
-            task["building_id"],
-        )
-        return
-
-    await _update_task_status(task_id, "COMPLETED", 100, None)
     logger.info(
-        "upload_processing_completed task_id=%s building_id=%s graph_data_id=%s",
+        "upload_processing_submitted task_id=%s building_id=%s",
         task["id"],
         task["building_id"],
-        graph_row["id"],
     )
+
+
+def _is_terminal_status(status: str) -> bool:
+    return status in {"COMPLETED", "FAILED"}
+
+
+async def apply_model_transform_update(
+    payload: ModelTransformUpdateRequest,
+) -> dict[str, Any]:
+    task = await data_transform_repository.get_task(payload.task_id)
+    if task is None:
+        raise TaskNotFoundError
+
+    if task["building_id"] is None:
+        raise BuildingNotFoundError
+
+    current_status = task["status"]
+    if _is_terminal_status(current_status):
+        if payload.status == current_status:
+            return _task_response(task)
+        raise InvalidTaskStatusError
+
+    if payload.status == "PROCESSING":
+        updated_task = await _update_task_status(
+            payload.task_id,
+            "PROCESSING",
+            max(task["progress_percent"], payload.progress_percent),
+            payload.error_message,
+        )
+    elif payload.status == "FAILED":
+        updated_task = await _update_task_status(
+            payload.task_id,
+            "FAILED",
+            max(task["progress_percent"], payload.progress_percent),
+            payload.error_message,
+        )
+    elif payload.status == "COMPLETED":
+        if payload.graph_data is None:
+            raise InvalidModelUpdateError
+
+        graph_row = await data_transform_repository.insert_graph_data(
+            task["building_id"],
+            payload.task_id,
+            json.dumps(payload.graph_data, ensure_ascii=False),
+        )
+        if graph_row is None:
+            await _update_task_status(
+                payload.task_id,
+                "FAILED",
+                task["progress_percent"],
+                "Failed to save graph data.",
+            )
+            raise InvalidModelUpdateError
+
+        updated_task = await _update_task_status(payload.task_id, "COMPLETED", 100, None)
+        logger.info(
+            "model_transform_completed task_id=%s building_id=%s graph_data_id=%s",
+            task["id"],
+            task["building_id"],
+            graph_row["id"],
+        )
+    else:
+        raise InvalidModelUpdateError
+
+    if updated_task is None:
+        raise TaskNotFoundError
+
+    logger.info(
+        "model_transform_status_updated task_id=%s status=%s progress_percent=%s",
+        payload.task_id,
+        updated_task["status"],
+        updated_task["progress_percent"],
+    )
+    return _task_response(updated_task)

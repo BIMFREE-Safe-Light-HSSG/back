@@ -17,8 +17,19 @@ def model_server_transform_url() -> str:
     return _env("MODEL_SERVER_URL", "http://localhost:8001/transform")
 
 
+def model_server_callback_url() -> str:
+    return _env(
+        "MODEL_CALLBACK_URL",
+        "http://localhost:8000/internal/model/data-transform-status",
+    )
+
+
+def model_callback_secret() -> str:
+    return _env("MODEL_CALLBACK_SECRET")
+
+
 def model_server_timeout() -> float:
-    raw_timeout = _env("MODEL_SERVER_TIMEOUT_SECONDS", "300")
+    raw_timeout = _env("MODEL_SERVER_TIMEOUT_SECONDS", "30")
     try:
         timeout = float(raw_timeout)
     except ValueError as exc:
@@ -48,18 +59,8 @@ def scan_file_location(scan_file_path: str) -> tuple[str, str]:
     return bucket_name, object_key
 
 
-def extract_graph_data(response_json: Any) -> Any:
-    if not isinstance(response_json, dict):
-        return response_json
-
-    for key in ("graph_data", "graph_json", "data", "result"):
-        if key in response_json:
-            return response_json[key]
-
-    return response_json
-
-
-async def request_graph_data_from_model_server(task: dict[str, Any]) -> Any:
+async def submit_transform_task_to_model_server(task: dict[str, Any]) -> None:
+    model_callback_secret()
     bucket_name, object_key = scan_file_location(task["scan_file_path"])
     payload = {
         "task_id": str(task["id"]),
@@ -67,10 +68,11 @@ async def request_graph_data_from_model_server(task: dict[str, Any]) -> Any:
         "scan_file_path": task["scan_file_path"],
         "bucket_name": bucket_name,
         "object_key": object_key,
+        "callback_url": model_server_callback_url(),
     }
 
     logger.info(
-        "model_transform_requested task_id=%s building_id=%s bucket=%s object_key=%s",
+        "model_transform_submit_requested task_id=%s building_id=%s bucket=%s object_key=%s",
         payload["task_id"],
         payload["building_id"],
         bucket_name,
@@ -81,15 +83,14 @@ async def request_graph_data_from_model_server(task: dict[str, Any]) -> Any:
         async with httpx.AsyncClient(timeout=model_server_timeout()) as client:
             response = await client.post(model_server_transform_url(), json=payload)
             response.raise_for_status()
-            response_json = response.json()
             logger.info(
-                "model_transform_completed task_id=%s status_code=%s",
+                "model_transform_submit_accepted task_id=%s status_code=%s",
                 payload["task_id"],
                 response.status_code,
             )
     except httpx.HTTPStatusError as exc:
         logger.warning(
-            "model_transform_rejected task_id=%s status_code=%s",
+            "model_transform_submit_rejected task_id=%s status_code=%s",
             payload["task_id"],
             exc.response.status_code,
         )
@@ -98,10 +99,9 @@ async def request_graph_data_from_model_server(task: dict[str, Any]) -> Any:
             f"Model server returned {exc.response.status_code}: {detail}"
         ) from exc
     except httpx.HTTPError as exc:
-        logger.warning("model_transform_failed task_id=%s error=%s", payload["task_id"], exc)
+        logger.warning(
+            "model_transform_submit_failed task_id=%s error=%s",
+            payload["task_id"],
+            exc,
+        )
         raise ModelServerError(f"Failed to request model server: {exc}") from exc
-    except ValueError as exc:
-        logger.warning("model_transform_invalid_json task_id=%s", payload["task_id"])
-        raise ModelServerError("Model server response must be valid JSON.") from exc
-
-    return extract_graph_data(response_json)

@@ -1,16 +1,15 @@
 # Model Server Integration Guide
 
-SuperSafeTwin 백엔드와 모델 서버 사이의 연동 계약입니다. 모델 서버는 스캔 파일을 읽어 scene graph JSON을 생성하고, 백엔드는 해당 JSON을 `graph_data.graph_json`에 저장합니다.
+SuperSafeTwin 백엔드와 모델 서버 사이의 연동 계약입니다. 현재 연동은 비동기 callback 방식입니다. 백엔드는 모델 서버에 변환 작업 시작만 요청하고, 모델 서버는 상태가 바뀔 때마다 백엔드 내부 callback API를 호출합니다.
 
 ## Base Rules
 
-- 백엔드가 모델 서버를 호출합니다. 모델 서버가 백엔드 API를 먼저 호출하지 않습니다.
-- 모델 서버 URL은 백엔드 환경변수 `MODEL_SERVER_URL`로 설정합니다.
-- 기본 호출 URL은 `http://localhost:8001/transform`이며, 운영/개발 환경에서는 `.env`의 `MODEL_SERVER_URL` 값을 사용합니다.
+- 백엔드가 모델 서버에 변환 작업을 submit합니다.
+- 모델 서버는 submit 요청을 받으면 긴 변환 결과를 기다리지 않고 `2xx`로 응답합니다. 권장 상태 코드는 `202 Accepted`입니다.
+- 모델 서버는 변환 진행 중 `PROCESSING`, `COMPLETED`, `FAILED` 상태를 백엔드 callback API로 전달합니다.
+- 완료 callback에는 `graph_data`를 함께 넣습니다. 백엔드는 해당 JSON을 `graph_data.graph_json`에 저장합니다.
+- callback API는 `Authorization: Bearer <MODEL_CALLBACK_SECRET>` 인증을 사용합니다.
 - 요청/응답은 JSON입니다.
-- 모델 서버 응답은 반드시 유효한 JSON이어야 합니다.
-- 모델 서버는 요청에 포함된 `bucket_name`과 `object_key`로 MinIO 객체를 읽을 수 있어야 합니다.
-- 백엔드는 모델 서버에 별도 인증 헤더를 보내지 않습니다.
 
 ## Environment
 
@@ -18,19 +17,21 @@ SuperSafeTwin 백엔드와 모델 서버 사이의 연동 계약입니다. 모�
 
 ```env
 MODEL_SERVER_URL=http://example.com/transform
-MODEL_SERVER_TIMEOUT_SECONDS=300
+MODEL_SERVER_TIMEOUT_SECONDS=30
+MODEL_CALLBACK_URL=https://api.example.com/internal/model/data-transform-status
+MODEL_CALLBACK_SECRET=change-this-model-callback-secret
 ```
 
 | Name | Default | Description |
 | --- | --- | --- |
-| `MODEL_SERVER_URL` | `http://localhost:8001/transform` | 백엔드가 `POST`로 호출할 모델 서버 transform endpoint |
-| `MODEL_SERVER_TIMEOUT_SECONDS` | `300` | 모델 서버 호출 timeout. 0보다 큰 숫자여야 함 |
+| `MODEL_SERVER_URL` | `http://localhost:8001/transform` | 백엔드가 작업 시작 요청을 보낼 모델 서버 endpoint |
+| `MODEL_SERVER_TIMEOUT_SECONDS` | `30` | submit 요청 timeout. 0보다 큰 숫자여야 함 |
+| `MODEL_CALLBACK_URL` | `http://localhost:8000/internal/model/data-transform-status` | 모델 서버가 상태 업데이트를 보낼 백엔드 callback URL |
+| `MODEL_CALLBACK_SECRET` | 없음 | callback API 인증용 bearer secret. 반드시 설정해야 함 |
 
-모델 서버가 MinIO를 직접 읽는 경우 백엔드와 같은 bucket/credential 또는 읽기 가능한 별도 credential을 사용해야 합니다. Docker Compose 내부 네트워크에서 접근한다면 MinIO endpoint는 보통 `http://minio:9000`입니다.
+모델 서버도 같은 `MODEL_CALLBACK_SECRET` 값을 알고 있어야 합니다. 실제 secret은 `.env`에만 작성합니다.
 
 ## Backend Flow
-
-프론트엔드와 백엔드의 전체 변환 흐름은 아래 순서입니다.
 
 ```text
 1. 프론트엔드가 POST /data-transforms/upload 호출
@@ -39,19 +40,17 @@ MODEL_SERVER_TIMEOUT_SECONDS=300
 4. 프론트엔드가 presigned URL로 스캔 파일 업로드
 5. 프론트엔드가 POST /data-transforms/{task_id}/complete-upload 호출
 6. 백엔드가 task 상태를 PROCESSING, progress_percent=10으로 변경
-7. 백엔드 background task가 모델 서버를 호출
-8. 모델 서버가 스캔 파일을 읽고 scene graph JSON 반환
-9. 백엔드가 반환 JSON을 graph_data.graph_json에 저장
-10. 백엔드가 task 상태를 COMPLETED, progress_percent=100으로 변경
+7. 백엔드 background task가 모델 서버에 transform 작업을 submit
+8. 모델 서버가 변환 상태 변경 시 백엔드 callback API 호출
+9. COMPLETED callback 수신 시 백엔드가 graph_data.graph_json 저장
+10. 프론트엔드는 GET /data-transforms/{task_id} polling으로 상태 확인
 ```
 
-모델 서버 호출 또는 graph 저장에 실패하면 백엔드는 task 상태를 `FAILED`로 변경하고 `error_message`에 실패 메시지를 저장합니다.
-
-## Transform Endpoint
+## Model Server Submit Endpoint
 
 ### POST `MODEL_SERVER_URL`
 
-백엔드가 업로드 완료 후 모델 서버에 보내는 요청입니다.
+백엔드가 업로드 완료 후 모델 서버에 보내는 작업 시작 요청입니다.
 
 Request body:
 
@@ -61,7 +60,8 @@ Request body:
   "building_id": "building-uuid",
   "scan_file_path": "s3://scan-files/data-transform/task-uuid/scan.zip",
   "bucket_name": "scan-files",
-  "object_key": "data-transform/task-uuid/scan.zip"
+  "object_key": "data-transform/task-uuid/scan.zip",
+  "callback_url": "https://api.example.com/internal/model/data-transform-status"
 }
 ```
 
@@ -74,21 +74,50 @@ Fields:
 | `scan_file_path` | string | no | `s3://{bucket_name}/{object_key}` 형식의 스캔 파일 위치 |
 | `bucket_name` | string | no | MinIO bucket 이름 |
 | `object_key` | string | no | MinIO object key |
-
-현재 백엔드는 `scan_file_path`가 `s3://`로 시작하고 bucket/key를 포함한다고 가정합니다. 스캔 파일 object key는 아래 형식으로 생성됩니다.
-
-```text
-data-transform/{task_id}/{safe_filename}
-```
-
-## Success Response
-
-모델 서버는 HTTP `2xx`와 유효한 JSON을 반환해야 합니다.
+| `callback_url` | string URL | no | 모델 서버가 상태 업데이트를 보낼 백엔드 callback URL |
 
 권장 응답:
 
 ```json
 {
+  "status": "ACCEPTED"
+}
+```
+
+백엔드는 submit 응답 body를 사용하지 않습니다. HTTP `2xx`이면 submit 성공으로 봅니다.
+
+## Backend Callback Endpoint
+
+### POST `/internal/model/data-transform-status`
+
+모델 서버가 백엔드로 상태 업데이트를 보낼 때 호출합니다.
+
+Headers:
+
+```http
+Authorization: Bearer <MODEL_CALLBACK_SECRET>
+Content-Type: application/json
+```
+
+### PROCESSING
+
+```json
+{
+  "task_id": "task-uuid",
+  "status": "PROCESSING",
+  "progress_percent": 45,
+  "error_message": null
+}
+```
+
+### COMPLETED
+
+```json
+{
+  "task_id": "task-uuid",
+  "status": "COMPLETED",
+  "progress_percent": 100,
+  "error_message": null,
   "graph_data": {
     "version": "1.0",
     "nodes": [],
@@ -98,68 +127,50 @@ data-transform/{task_id}/{safe_filename}
 }
 ```
 
-백엔드는 응답 JSON에서 아래 key를 순서대로 찾아 첫 번째 값을 scene graph로 저장합니다.
+`COMPLETED` 상태에서는 `graph_data`가 필수입니다. 백엔드는 이 값을 그대로 `graph_data.graph_json`에 저장합니다.
 
-```text
-graph_data
-graph_json
-data
-result
-```
-
-위 key가 없으면 응답 JSON 전체를 scene graph로 저장합니다. 따라서 아래 응답도 허용됩니다.
+### FAILED
 
 ```json
 {
-  "version": "1.0",
-  "nodes": [],
-  "edges": [],
-  "assets": {}
+  "task_id": "task-uuid",
+  "status": "FAILED",
+  "progress_percent": 60,
+  "error_message": "failed to parse scan file"
 }
 ```
 
-`nodes`, `edges`, `assets`의 상세 schema는 아직 백엔드에서 강제 검증하지 않습니다. 다만 프론트엔드 조회 API는 저장된 JSON을 그대로 `scene_graph`로 반환하므로, 모델 서버와 프론트엔드가 같은 scene graph schema를 공유해야 합니다.
+`FAILED` 상태에서는 `error_message`가 필수입니다.
 
-## Failure Response
-
-모델 서버가 HTTP `4xx` 또는 `5xx`를 반환하면 백엔드는 변환 실패로 처리합니다.
-
-예시:
+Callback response:
 
 ```json
 {
-  "detail": "scan file is not readable"
+  "task_id": "task-uuid",
+  "building_id": "building-uuid",
+  "status": "PROCESSING",
+  "progress_percent": 45,
+  "error_message": null
 }
 ```
 
-백엔드 처리:
+## Status Rules
+
+허용 상태는 아래 세 가지입니다.
 
 ```text
-data_transform.status = FAILED
-data_transform.progress_percent = 기존 progress_percent
-data_transform.error_message = "Model server returned {status_code}: {response_text}"
+PROCESSING
+COMPLETED
+FAILED
 ```
 
-모델 서버가 응답 본문을 길게 반환해도 백엔드는 앞 500자까지만 error message에 포함합니다.
+백엔드는 terminal status를 보호합니다. `COMPLETED` 또는 `FAILED`가 된 task에 다른 상태 callback이 오면 `409 Conflict`를 반환합니다. 같은 terminal status callback이 재전송되면 현재 task 상태를 그대로 반환하여 중복 callback을 안전하게 처리합니다.
 
-네트워크 오류, timeout, invalid JSON 응답도 `FAILED`로 처리됩니다.
-
-## Timeout
-
-백엔드는 `MODEL_SERVER_TIMEOUT_SECONDS` 동안 모델 서버 응답을 기다립니다. 기본값은 300초입니다.
-
-모델 서버 변환 시간이 이 값을 넘길 수 있다면 둘 중 하나를 선택해야 합니다.
-
-- `MODEL_SERVER_TIMEOUT_SECONDS`를 충분히 늘립니다.
-- 모델 서버를 즉시 `2xx`로 응답하는 비동기 처리 방식으로 바꾸고, 백엔드 연동 코드도 별도 상태 조회/콜백 방식으로 변경합니다.
-
-현재 구현은 단일 동기 `POST` 응답에서 최종 scene graph JSON을 받는 방식입니다.
+진행률은 `0`부터 `100` 사이 정수여야 합니다. `PROCESSING` 또는 `FAILED` callback에서 기존 progress보다 낮은 값이 오면 백엔드는 기존 progress를 유지합니다.
 
 ## Storage Contract
 
-모델 서버는 요청의 `bucket_name`과 `object_key`를 사용해 업로드된 스캔 파일을 읽습니다.
-
-MinIO object 예시:
+모델 서버는 submit 요청의 `bucket_name`과 `object_key`를 사용해 업로드된 스캔 파일을 읽습니다.
 
 ```text
 bucket_name: scan-files
@@ -167,48 +178,50 @@ object_key: data-transform/0f2f5f6a-2cc8-4db6-a6ed-2c092dff4676/scan.zip
 scan_file_path: s3://scan-files/data-transform/0f2f5f6a-2cc8-4db6-a6ed-2c092dff4676/scan.zip
 ```
 
-백엔드는 모델 서버에 presigned GET URL을 전달하지 않습니다. 모델 서버는 자체 MinIO/S3 client 설정으로 객체를 읽어야 합니다.
+백엔드는 모델 서버에 presigned GET URL을 전달하지 않습니다. 모델 서버는 자체 MinIO/S3 client 설정으로 객체를 읽어야 합니다. Docker Compose 내부 네트워크에서 접근한다면 MinIO endpoint는 보통 `http://minio:9000`입니다.
 
 ## Backend Persistence
 
-성공 시 백엔드는 모델 서버에서 추출한 scene graph JSON을 아래 테이블에 저장합니다.
+성공 시 백엔드는 callback의 `graph_data`를 아래 테이블에 저장합니다.
 
 ```text
-graph_data.building_id = building_id
+graph_data.building_id = data_transform.building_id
 graph_data.data_transform_id = task_id
-graph_data.graph_json = model_server_response_graph_json
+graph_data.graph_json = callback.graph_data
 ```
 
-이후 프론트엔드는 변환 task API가 아니라 건물 scene graph API로 최종 결과를 조회합니다.
+이후 프론트엔드는 최종 결과를 아래 API로 조회합니다.
 
 ```text
 GET /buildings/{building_id}/scene-graph
 ```
 
-## Logging
+## Error Handling
 
-백엔드는 모델 서버 연동 중 아래 로그 이벤트를 남깁니다.
+모델 서버 submit 요청이 실패하면 백엔드는 task를 `FAILED`로 변경합니다.
+
+Callback API의 주요 에러는 아래와 같습니다.
 
 ```text
-model_transform_requested
-model_transform_completed
-model_transform_rejected
-model_transform_failed
-model_transform_invalid_json
+400 Bad Request        payload가 계약과 맞지 않음
+401 Unauthorized       MODEL_CALLBACK_SECRET 불일치
+404 Not Found          task 또는 building 없음
+409 Conflict           terminal status 이후 다른 상태 callback 수신
+422 Unprocessable      request body validation 실패
+500 Internal Error     callback secret 미설정 등 서버 설정 오류
 ```
 
-모델 서버 로그에도 `task_id`를 함께 남기면 백엔드 task와 모델 서버 job을 추적하기 쉽습니다.
-
 ## Minimal Model Server Example
-
-아래는 계약 형태를 보여주는 최소 FastAPI 예시입니다. 실제 변환 로직과 MinIO 읽기 로직은 모델 서버 구현에 맞게 교체합니다.
 
 ```python
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI
 from pydantic import BaseModel
 
+
+MODEL_CALLBACK_SECRET = "change-this-model-callback-secret"
 
 app = FastAPI()
 
@@ -219,26 +232,33 @@ class TransformRequest(BaseModel):
     scan_file_path: str
     bucket_name: str
     object_key: str
+    callback_url: str
 
 
-@app.post("/transform")
-async def transform_scan(payload: TransformRequest) -> dict[str, Any]:
-    if not payload.scan_file_path.startswith("s3://"):
-        raise HTTPException(status_code=400, detail="scan_file_path must be s3 path")
+@app.post("/transform", status_code=202)
+async def transform_scan(payload: TransformRequest) -> dict[str, str]:
+    # 실제 구현에서는 background worker/queue로 넘깁니다.
+    return {"status": "ACCEPTED"}
 
-    graph_data = {
-        "version": "1.0",
-        "nodes": [],
-        "edges": [],
-        "assets": {},
-    }
-    return {"graph_data": graph_data}
+
+async def notify_completed(callback_url: str, task_id: str, graph_data: dict[str, Any]) -> None:
+    async with httpx.AsyncClient(timeout=30) as client:
+        await client.post(
+            callback_url,
+            headers={"Authorization": f"Bearer {MODEL_CALLBACK_SECRET}"},
+            json={
+                "task_id": task_id,
+                "status": "COMPLETED",
+                "progress_percent": 100,
+                "error_message": None,
+                "graph_data": graph_data,
+            },
+        )
 ```
 
 ## Compatibility Notes
 
-- 모델 서버 응답 최상위 key는 `graph_data`를 권장합니다.
-- `graph_json`, `data`, `result`도 현재 백엔드와 호환됩니다.
-- 응답 JSON 안에 binary 또는 매우 큰 asset 본문을 직접 넣지 않습니다.
+- 프론트엔드의 `POST /data-transforms/{task_id}/complete-upload`와 polling 흐름은 유지됩니다.
+- 모델 서버는 상태가 바뀔 때마다 callback을 보내되, 네트워크 실패에 대비해 재시도할 수 있어야 합니다.
+- `graph_data` 안에 binary 또는 매우 큰 asset 본문을 직접 넣지 않습니다.
 - 영상, point cloud, mesh, glb 같은 무거운 asset은 MinIO에 저장하고 scene graph에는 asset id, object key, URL 같은 참조만 넣는 방향을 권장합니다.
-- 모델 서버가 실패 사유를 JSON `detail` 또는 짧은 text body로 반환하면 백엔드 task의 `error_message`에서 원인을 확인하기 쉽습니다.
