@@ -38,6 +38,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-scan-files}
+    volumes:
+      - ./infra/minio/cors.xml:/etc/minio/cors.xml:ro
     entrypoint: /bin/sh
     command:
       - -c
@@ -50,6 +52,7 @@ services:
 
         mc mb --ignore-existing "local/$${MINIO_BUCKET_NAME}"
         mc anonymous set none "local/$${MINIO_BUCKET_NAME}"
+        mc cors set "local/$${MINIO_BUCKET_NAME}" /etc/minio/cors.xml
 
   caddy:
     image: caddy:2-alpine

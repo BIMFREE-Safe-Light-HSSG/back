@@ -9,53 +9,6 @@
 }
 
 {$MINIO_PUBLIC_DOMAIN} {
-	@storage_frontend_origin header Origin {$FRONTEND_ORIGIN}
-	@storage_localhost_origin header Origin http://localhost:3000
-	@storage_loopback_origin header Origin http://127.0.0.1:3000
-
-	@storage_preflight_frontend {
-		method OPTIONS
-		header Origin {$FRONTEND_ORIGIN}
-	}
-
-	@storage_preflight_localhost {
-		method OPTIONS
-		header Origin http://localhost:3000
-	}
-
-	@storage_preflight_loopback {
-		method OPTIONS
-		header Origin http://127.0.0.1:3000
-	}
-
-	header @storage_frontend_origin {
-		Access-Control-Allow-Origin "{http.request.header.Origin}"
-		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
-		Access-Control-Allow-Headers "*"
-		Access-Control-Expose-Headers "ETag"
-		Vary "Origin"
-	}
-
-	header @storage_localhost_origin {
-		Access-Control-Allow-Origin "{http.request.header.Origin}"
-		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
-		Access-Control-Allow-Headers "*"
-		Access-Control-Expose-Headers "ETag"
-		Vary "Origin"
-	}
-
-	header @storage_loopback_origin {
-		Access-Control-Allow-Origin "{http.request.header.Origin}"
-		Access-Control-Allow-Methods "PUT, GET, HEAD, OPTIONS"
-		Access-Control-Allow-Headers "*"
-		Access-Control-Expose-Headers "ETag"
-		Vary "Origin"
-	}
-
-	respond @storage_preflight_frontend "" 204
-	respond @storage_preflight_localhost "" 204
-	respond @storage_preflight_loopback "" 204
-
 	reverse_proxy minio:9000 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}
