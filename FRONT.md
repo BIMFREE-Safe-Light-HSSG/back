@@ -18,6 +18,7 @@ GET  /auth/me
 
 GET  /buildings
 GET  /buildings/{building_id}/scene-graph
+POST /buildings/{building_id}/scene-graph/mutations
 
 POST /facility/buildings
 
@@ -241,12 +242,203 @@ users.jurisdiction_code/name과 buildings.district_code/name이 매칭되는 건
     "version": "1.0",
     "nodes": [],
     "edges": [],
-    "assets": {}
+    "assets": {},
+    "overlays": {}
   }
 }
 ```
 
 scene graph JSON에는 의미 정보만 둡니다. 영상, point cloud, mesh, glb 같은 무거운 asset은 MinIO에 두고 scene graph에는 asset id 또는 URL만 포함하는 방향입니다.
+
+### POST /buildings/{building_id}/scene-graph/mutations
+
+선택한 건물의 최신 scene graph에 변경사항을 적용합니다. 프론트는 `GET /buildings/{building_id}/scene-graph`에서 받은 `graph_data_id`를 `base_graph_data_id`로 보내야 합니다.
+
+백엔드는 기존 `graph_data`를 덮어쓰지 않고 변경이 적용된 새 scene graph snapshot을 저장한 뒤 반환합니다. `base_graph_data_id`가 최신 graph가 아니면 `409 Conflict`를 반환하므로, 프론트는 최신 scene graph를 다시 조회한 뒤 재시도해야 합니다.
+
+지원 mutation type:
+
+```text
+ADD_NODE
+UPDATE_NODE
+REMOVE_NODE
+ADD_OVERLAY
+UPDATE_OVERLAY
+REMOVE_OVERLAY
+```
+
+권한:
+
+```text
+FACILITY_MANAGER  node mutation, overlay mutation 가능
+FIREFIGHTER       overlay mutation 가능
+```
+
+#### ADD_NODE
+
+시설물처럼 scene graph에 새 node를 추가합니다. `node.id`는 생략할 수 있고, 생략하면 백엔드가 UUID를 생성합니다.
+
+요청:
+
+```json
+{
+  "base_graph_data_id": "current-graph-data-uuid",
+  "mutations": [
+    {
+      "type": "ADD_NODE",
+      "payload": {
+        "node": {
+          "type": "facility",
+          "label": "소화기",
+          "position": {
+            "x": 12.4,
+            "y": 0,
+            "z": 8.2
+          },
+          "metadata": {
+            "facility_type": "fire_extinguisher"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+#### UPDATE_NODE
+
+기존 node를 수정합니다. `node.id`는 필수입니다. payload의 node 필드는 기존 node에 merge됩니다.
+
+```json
+{
+  "base_graph_data_id": "current-graph-data-uuid",
+  "mutations": [
+    {
+      "type": "UPDATE_NODE",
+      "payload": {
+        "node": {
+          "id": "facility-extinguisher-001",
+          "label": "1층 복도 소화기",
+          "metadata": {
+            "facility_type": "fire_extinguisher",
+            "inspection_status": "OK"
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+#### REMOVE_NODE
+
+기존 node를 삭제합니다. 백엔드는 삭제되는 node와 연결된 edge도 함께 제거합니다.
+
+```json
+{
+  "base_graph_data_id": "current-graph-data-uuid",
+  "mutations": [
+    {
+      "type": "REMOVE_NODE",
+      "payload": {
+        "node_id": "facility-extinguisher-001"
+      }
+    }
+  ]
+}
+```
+
+#### ADD_OVERLAY
+
+화재, 위험지역, 하이라이트처럼 scene graph 위에 표시할 overlay를 추가합니다. `overlay.id`는 생략할 수 있고, 생략하면 백엔드가 UUID를 생성합니다. `overlay_type`을 생략하면 `overlays.items`에 저장됩니다.
+
+```json
+{
+  "base_graph_data_id": "current-graph-data-uuid",
+  "mutations": [
+    {
+      "type": "ADD_OVERLAY",
+      "payload": {
+        "overlay_type": "incidents",
+        "overlay": {
+          "type": "FIRE",
+          "target_node_id": "room-101",
+          "position": {
+            "x": 10.2,
+            "y": 0,
+            "z": 4.8
+          },
+          "severity": "HIGH",
+          "status": "ACTIVE"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### UPDATE_OVERLAY
+
+기존 overlay를 수정합니다. `overlay.id`는 필수입니다. `overlay_type`은 대상 overlay가 들어있는 collection 이름입니다.
+
+```json
+{
+  "base_graph_data_id": "current-graph-data-uuid",
+  "mutations": [
+    {
+      "type": "UPDATE_OVERLAY",
+      "payload": {
+        "overlay_type": "incidents",
+        "overlay": {
+          "id": "incident-uuid",
+          "severity": "MEDIUM",
+          "status": "ACTIVE"
+        }
+      }
+    }
+  ]
+}
+```
+
+#### REMOVE_OVERLAY
+
+기존 overlay를 삭제합니다.
+
+```json
+{
+  "base_graph_data_id": "current-graph-data-uuid",
+  "mutations": [
+    {
+      "type": "REMOVE_OVERLAY",
+      "payload": {
+        "overlay_type": "incidents",
+        "overlay_id": "incident-uuid"
+      }
+    }
+  ]
+}
+```
+
+응답:
+
+```json
+{
+  "building_id": "building-uuid",
+  "building_name": "충남대학교 공과대학5호관",
+  "graph_data_id": "new-graph-data-uuid",
+  "previous_graph_data_id": "current-graph-data-uuid",
+  "created_at": "2026-05-31T00:00:00",
+  "scene_graph": {
+    "version": "1.0",
+    "nodes": [],
+    "edges": [],
+    "assets": {},
+    "overlays": {}
+  }
+}
+```
+
+프론트는 응답의 `scene_graph` 또는 이후 `GET /buildings/{building_id}/scene-graph` 결과를 기준으로 뷰어를 다시 렌더링합니다.
 
 ## Data Transform
 
@@ -396,6 +588,18 @@ GET /buildings/{building_id}/scene-graph
 8. GET /buildings/{building_id}/scene-graph
 ```
 
+### Scene graph 수정
+
+```text
+1. GET /buildings
+2. 사용자가 건물 선택
+3. GET /buildings/{building_id}/scene-graph
+4. Three.js 뷰어에서 node 또는 overlay 편집
+5. POST /buildings/{building_id}/scene-graph/mutations
+6. 201 응답의 scene_graph로 렌더링 갱신
+7. 409 Conflict이면 최신 scene graph 재조회 후 재시도
+```
+
 ## Error Status
 
 주요 에러는 아래 기준으로 처리합니다.
@@ -405,7 +609,7 @@ GET /buildings/{building_id}/scene-graph
 401 Unauthorized       토큰 없음 또는 만료/잘못된 토큰
 403 Forbidden          권한 없음
 404 Not Found          리소스 없음
-409 Conflict           중복 이메일, 이미 처리 중인 task 등
+409 Conflict           중복 이메일, 이미 처리 중인 task, 최신 scene graph 충돌 등
 422 Unprocessable      request body validation 실패
 500 Internal Error     서버 내부 설정/처리 오류
 502 Bad Gateway        모델 서버 호출 실패
@@ -418,3 +622,4 @@ GET /buildings/{building_id}/scene-graph
 - `GET /buildings`는 시설관리자와 소방대원이 공통으로 사용합니다.
 - `GET /data-transforms/{task_id}`는 task 상태만 반환합니다. graph JSON은 반환하지 않습니다.
 - 최종 scene graph는 항상 `GET /buildings/{building_id}/scene-graph`에서 가져옵니다.
+- scene graph 수정은 `POST /buildings/{building_id}/scene-graph/mutations`를 사용합니다. 프론트는 현재 `graph_data_id`를 `base_graph_data_id`로 보내야 합니다.

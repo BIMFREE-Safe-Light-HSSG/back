@@ -108,3 +108,18 @@ async def get_latest_scene_graph(building_id: UUID) -> dict[str, Any] | None:
         """,
         building_id,
     )
+
+
+async def insert_scene_graph_snapshot(
+    building_id: UUID,
+    graph_data_json: str,
+) -> dict[str, Any] | None:
+    return await db.fetch_one(
+        """
+        INSERT INTO graph_data (building_id, data_transform_id, graph_json)
+        VALUES ($1, NULL, $2::jsonb)
+        RETURNING id, graph_json::text AS graph_json, created_at
+        """,
+        building_id,
+        graph_data_json,
+    )

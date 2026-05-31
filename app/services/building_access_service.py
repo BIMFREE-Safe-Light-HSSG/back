@@ -102,3 +102,10 @@ async def get_building_scene_graph(
         "created_at": graph["created_at"],
         "scene_graph": _decode_graph_json(graph["graph_json"]),
     }
+
+
+async def get_accessible_building_for_user(
+    current_user: dict[str, Any],
+    building_id: UUID,
+) -> dict[str, Any]:
+    return await _get_accessible_building(current_user, building_id)
