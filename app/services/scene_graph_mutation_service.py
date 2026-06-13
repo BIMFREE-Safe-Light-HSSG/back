@@ -7,6 +7,7 @@ from app.repositories import building_access as building_access_repository
 from app.schemas.buildings import SceneGraphMutation, SceneGraphMutationRequest
 from app.services.building_access_service import (
     BuildingAccessDeniedError,
+    BuildingNotFoundError,
     SceneGraphNotFoundError,
     _decode_graph_json,
     get_accessible_building_for_user,
@@ -33,7 +34,27 @@ async def mutate_building_scene_graph(
 ) -> dict[str, Any]:
     building = await get_accessible_building_for_user(current_user, building_id)
     _ensure_mutation_permission(current_user, payload.mutations)
+    return await _mutate_scene_graph_snapshot(building, building_id, payload)
 
+
+async def mutate_building_scene_graph_as_system(
+    building_id: UUID,
+    payload: SceneGraphMutationRequest,
+) -> dict[str, Any]:
+    building = await building_access_repository.get_building_for_access_check(
+        building_id
+    )
+    if building is None:
+        raise BuildingNotFoundError
+
+    return await _mutate_scene_graph_snapshot(building, building_id, payload)
+
+
+async def _mutate_scene_graph_snapshot(
+    building: dict[str, Any],
+    building_id: UUID,
+    payload: SceneGraphMutationRequest,
+) -> dict[str, Any]:
     latest_graph = await building_access_repository.get_latest_scene_graph(building_id)
     if latest_graph is None:
         raise SceneGraphNotFoundError

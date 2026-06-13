@@ -10,6 +10,7 @@ from app.api.auth import router as auth_router
 from app.api.buildings import router as buildings_router
 from app.api.data_transform import router as data_transform_router
 from app.api.facility import router as facility_router
+from app.api.fire_risk_assessments import router as fire_risk_assessments_router
 from app.api.model_callbacks import router as model_callbacks_router
 from app.core.database import db
 from app.core.logging import configure_logging
@@ -76,6 +77,7 @@ app.include_router(auth_router)
 app.include_router(buildings_router)
 app.include_router(data_transform_router)
 app.include_router(facility_router)
+app.include_router(fire_risk_assessments_router)
 app.include_router(model_callbacks_router)
 
 if _dev_routes_enabled():

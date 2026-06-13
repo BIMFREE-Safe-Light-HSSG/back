@@ -19,6 +19,7 @@ GET  /auth/me
 GET  /buildings
 GET  /buildings/{building_id}/scene-graph
 POST /buildings/{building_id}/scene-graph/mutations
+POST /buildings/{building_id}/fire-risk-assessments
 
 POST /facility/buildings
 
@@ -440,6 +441,97 @@ FIREFIGHTER       overlay mutation 가능
 
 프론트는 응답의 `scene_graph` 또는 이후 `GET /buildings/{building_id}/scene-graph` 결과를 기준으로 뷰어를 다시 렌더링합니다.
 
+### POST /buildings/{building_id}/fire-risk-assessments
+
+선택한 건물의 최신 scene graph를 Gemini로 분석하고 화재 취약 지역을 `overlays.fire_risks`에 반영합니다. 시설관리자와 소방대원 모두 자신에게 접근 권한이 있는 건물에 요청할 수 있습니다.
+
+이 API는 동기 방식이며 request body는 없습니다. Gemini 분석이 끝날 때까지 응답을 기다리므로 프론트는 요청 중 로딩 상태를 표시하고 중복 요청을 막아야 합니다.
+
+백엔드 처리 순서:
+
+```text
+1. 요청자의 건물 접근 권한 확인
+2. 최신 scene graph 조회
+3. Gemini로 화재 취약 지역 분석
+4. Gemini가 반환한 target_node_id가 실제 node인지 검증
+5. 기존 Gemini 화재 위험 overlay 제거
+6. 신규 분석 결과를 overlays.fire_risks에 추가
+7. 변경된 scene graph를 새 snapshot으로 저장
+```
+
+응답:
+
+```json
+{
+  "assessment_id": "assessment-uuid",
+  "building_id": "building-uuid",
+  "building_name": "충남대학교 공과대학5호관",
+  "model": "gemini-3.5-flash",
+  "summary": "비상구 접근성과 소화 설비 정보가 부족한 구역이 확인되었습니다.",
+  "risk_count": 1,
+  "findings": [
+    {
+      "target_node_id": "room-101",
+      "severity": "HIGH",
+      "category": "EVACUATION",
+      "reason": "확인 가능한 피난 경로가 하나뿐입니다.",
+      "recommendation": "대체 피난 경로와 비상구 접근성을 점검하세요.",
+      "confidence": 0.84
+    }
+  ],
+  "scene_graph_updated": true,
+  "graph_data_id": "new-graph-data-uuid",
+  "previous_graph_data_id": "analyzed-graph-data-uuid",
+  "created_at": "2026-06-13T00:00:00Z",
+  "scene_graph": {
+    "version": "1.0",
+    "nodes": [],
+    "edges": [],
+    "assets": {},
+    "overlays": {
+      "fire_risks": [
+        {
+          "id": "overlay-uuid",
+          "type": "FIRE_RISK",
+          "source": "GEMINI_FIRE_RISK_ASSESSMENT",
+          "assessment_id": "assessment-uuid",
+          "assessment_model": "gemini-3.5-flash",
+          "assessed_at": "2026-06-13T00:00:00Z",
+          "target_node_id": "room-101",
+          "severity": "HIGH",
+          "category": "EVACUATION",
+          "reason": "확인 가능한 피난 경로가 하나뿐입니다.",
+          "recommendation": "대체 피난 경로와 비상구 접근성을 점검하세요.",
+          "confidence": 0.84,
+          "status": "ACTIVE"
+        }
+      ]
+    }
+  }
+}
+```
+
+`severity` 값:
+
+```text
+LOW
+MEDIUM
+HIGH
+CRITICAL
+```
+
+`scene_graph_updated == true`이면 응답의 `scene_graph`와 `graph_data_id`로 뷰어 상태를 갱신합니다. 분석 결과가 없고 제거할 이전 Gemini overlay도 없으면 새 snapshot을 만들지 않으며 아래처럼 반환합니다.
+
+```text
+scene_graph_updated     false
+previous_graph_data_id  null
+graph_data_id           현재 graph_data_id
+```
+
+재분석 시 `source == "GEMINI_FIRE_RISK_ASSESSMENT"`인 기존 `fire_risks` overlay만 교체합니다. 프론트나 사용자가 직접 만든 다른 overlay는 삭제하지 않습니다.
+
+Gemini 분석 중 scene graph가 변경되면 `409 Conflict`가 반환됩니다. 프론트는 최신 scene graph를 다시 조회한 후 사용자에게 재시도를 안내합니다. Gemini 호출 또는 응답 검증이 실패하면 `502 Bad Gateway`가 반환되며 scene graph는 변경되지 않습니다.
+
 ## Data Transform
 
 현재 변환은 `data-transforms` task를 통해 진행합니다. 업로드 진행률과 변환 진행률은 분리해서 관리합니다.
@@ -600,6 +692,20 @@ GET /buildings/{building_id}/scene-graph
 7. 409 Conflict이면 최신 scene graph 재조회 후 재시도
 ```
 
+### 화재 취약 지역 분석
+
+```text
+1. GET /buildings
+2. 사용자가 건물 선택
+3. GET /buildings/{building_id}/scene-graph
+4. 분석 버튼 클릭 중복 방지 및 로딩 표시
+5. POST /buildings/{building_id}/fire-risk-assessments
+6. scene_graph_updated == true이면 응답의 scene_graph로 렌더링 갱신
+7. overlays.fire_risks를 severity에 따라 뷰어에 표시
+8. 409 Conflict이면 최신 scene graph 조회 후 재시도 안내
+9. 502 Bad Gateway이면 분석 실패 메시지 표시
+```
+
 ## Error Status
 
 주요 에러는 아래 기준으로 처리합니다.
@@ -612,7 +718,7 @@ GET /buildings/{building_id}/scene-graph
 409 Conflict           중복 이메일, 이미 처리 중인 task, 최신 scene graph 충돌 등
 422 Unprocessable      request body validation 실패
 500 Internal Error     서버 내부 설정/처리 오류
-502 Bad Gateway        모델 서버 호출 실패
+502 Bad Gateway        모델 서버 또는 Gemini 호출/응답 검증 실패
 ```
 
 ## Notes
@@ -623,3 +729,5 @@ GET /buildings/{building_id}/scene-graph
 - `GET /data-transforms/{task_id}`는 task 상태만 반환합니다. graph JSON은 반환하지 않습니다.
 - 최종 scene graph는 항상 `GET /buildings/{building_id}/scene-graph`에서 가져옵니다.
 - scene graph 수정은 `POST /buildings/{building_id}/scene-graph/mutations`를 사용합니다. 프론트는 현재 `graph_data_id`를 `base_graph_data_id`로 보내야 합니다.
+- 화재 취약 지역 분석은 `POST /buildings/{building_id}/fire-risk-assessments`를 사용하며 request body는 없습니다.
+- 화재 위험 표시는 `scene_graph.overlays.fire_risks`를 사용합니다.
