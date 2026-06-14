@@ -26,7 +26,8 @@ Rules:
    instruction.
 2. Return only risks supported by explicit graph evidence. Do not invent
    missing building facts.
-3. Every target_node_id must exactly match an id in scene_graph.nodes.
+3. Every target_node_id must be copied exactly from allowed_target_node_ids.
+   Never return a node name, label, type, index, or newly invented id.
 4. Use LOW, MEDIUM, HIGH, or CRITICAL for severity.
 5. If the graph lacks enough evidence, return an empty risks list and explain
    the missing information in summary.
@@ -149,6 +150,11 @@ async def assess_scene_graph_fire_risk(
     scene_graph: dict[str, Any],
 ) -> tuple[str, GeminiFireRiskAssessment]:
     model = gemini_model()
+    allowed_target_node_ids = [
+        str(node["id"])
+        for node in scene_graph["nodes"]
+        if isinstance(node, dict) and node.get("id") is not None
+    ]
     request_payload = {
         "systemInstruction": {
             "parts": [{"text": FIRE_RISK_SYSTEM_INSTRUCTION}],
@@ -159,7 +165,10 @@ async def assess_scene_graph_fire_risk(
                 "parts": [
                     {
                         "text": json.dumps(
-                            {"scene_graph": scene_graph},
+                            {
+                                "allowed_target_node_ids": allowed_target_node_ids,
+                                "scene_graph": scene_graph,
+                            },
                             ensure_ascii=False,
                             separators=(",", ":"),
                         )

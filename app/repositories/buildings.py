@@ -31,6 +31,29 @@ async def get_owned_building_by_id(
     )
 
 
+async def delete_owned_building(
+    building_id: UUID,
+    user_id: UUID,
+) -> bool:
+    deleted_building = await db.fetch_one(
+        """
+        DELETE FROM buildings b
+        WHERE b.id = $1
+          AND EXISTS (
+              SELECT 1
+              FROM user_buildings ub
+              WHERE ub.building_id = b.id
+                AND ub.user_id = $2
+                AND ub.role = 'OWNER'
+          )
+        RETURNING b.id
+        """,
+        building_id,
+        user_id,
+    )
+    return deleted_building is not None
+
+
 async def create_managed_building(
     user_id: UUID,
     location: dict[str, Any],

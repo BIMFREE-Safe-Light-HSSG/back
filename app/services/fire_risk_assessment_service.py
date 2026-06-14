@@ -16,6 +16,7 @@ from app.services.scene_graph_mutation_service import mutate_building_scene_grap
 
 FIRE_RISK_OVERLAY_TYPE = "fire_risks"
 FIRE_RISK_OVERLAY_SOURCE = "GEMINI_FIRE_RISK_ASSESSMENT"
+NODE_REFERENCE_FIELDS = ("id", "node_id", "name", "label")
 logger = logging.getLogger("app.services.fire_risk_assessment")
 
 
@@ -47,28 +48,71 @@ def _scene_graph_for_assessment(scene_graph: Any) -> dict[str, Any]:
     return assessment_graph
 
 
-def _node_ids(scene_graph: dict[str, Any]) -> set[str]:
-    node_ids = {
-        str(node["id"])
-        for node in scene_graph["nodes"]
-        if isinstance(node, dict) and node.get("id") is not None
+def _normalized_node_reference(value: Any) -> str:
+    return str(value).strip().casefold()
+
+
+def _node_reference_map(scene_graph: dict[str, Any]) -> dict[str, str]:
+    references: dict[str, set[str]] = {}
+
+    for node in scene_graph["nodes"]:
+        if not isinstance(node, dict) or node.get("id") is None:
+            continue
+
+        node_id = str(node["id"]).strip()
+        if not node_id:
+            continue
+
+        values = [node.get(field) for field in NODE_REFERENCE_FIELDS]
+        metadata = node.get("metadata")
+        if isinstance(metadata, dict):
+            values.extend(metadata.get(field) for field in NODE_REFERENCE_FIELDS)
+
+        for value in values:
+            if value is None:
+                continue
+
+            reference = _normalized_node_reference(value)
+            if reference:
+                references.setdefault(reference, set()).add(node_id)
+
+    node_reference_map = {
+        reference: next(iter(node_ids))
+        for reference, node_ids in references.items()
+        if len(node_ids) == 1
     }
-    if not node_ids:
+    if not node_reference_map:
         raise FireRiskSceneGraphError
-    return node_ids
+    return node_reference_map
 
 
-def _validate_findings(
+def _resolve_findings(
     assessment: GeminiFireRiskAssessment,
-    valid_node_ids: set[str],
-) -> None:
-    invalid_node_ids = {
-        finding.target_node_id
-        for finding in assessment.risks
-        if finding.target_node_id not in valid_node_ids
-    }
-    if invalid_node_ids:
+    node_reference_map: dict[str, str],
+) -> GeminiFireRiskAssessment:
+    resolved_findings: list[FireRiskFinding] = []
+    invalid_references: list[str] = []
+
+    for finding in assessment.risks:
+        target_node_id = node_reference_map.get(
+            _normalized_node_reference(finding.target_node_id)
+        )
+        if target_node_id is None:
+            invalid_references.append(finding.target_node_id)
+            continue
+
+        resolved_findings.append(
+            finding.model_copy(update={"target_node_id": target_node_id})
+        )
+
+    if invalid_references:
+        logger.warning(
+            "fire_risk_unknown_node_references invalid_references=%s",
+            invalid_references,
+        )
         raise FireRiskAssessmentResponseError
+
+    return assessment.model_copy(update={"risks": resolved_findings})
 
 
 def _generated_overlay_ids(scene_graph: dict[str, Any]) -> list[str]:
@@ -160,9 +204,9 @@ async def assess_building_fire_risk(
 ) -> dict[str, Any]:
     current_graph = await get_building_scene_graph(current_user, building_id)
     scene_graph = _scene_graph_for_assessment(current_graph["scene_graph"])
-    valid_node_ids = _node_ids(scene_graph)
+    node_reference_map = _node_reference_map(scene_graph)
     model, assessment = await assess_scene_graph_fire_risk(scene_graph)
-    _validate_findings(assessment, valid_node_ids)
+    assessment = _resolve_findings(assessment, node_reference_map)
 
     assessment_id = uuid4()
     assessed_at = datetime.now(UTC)

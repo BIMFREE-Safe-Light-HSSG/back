@@ -22,8 +22,19 @@ router = APIRouter(
 )
 
 
+FLOOR_5F_ALERT_BUILDING_ID = UUID("e2cb1bb0-fdb8-49a6-ad09-bdf2dcd7a49a")
+FLOOR_5F_ALERT_SCOPE_NODE_ID = "FLOOR_5F"
+
+
 class DevAlertResponse(BaseModel):
     status: str
+
+
+def _alert_scope_node_id(building_id: UUID) -> str | None:
+    if building_id == FLOOR_5F_ALERT_BUILDING_ID:
+        return FLOOR_5F_ALERT_SCOPE_NODE_ID
+
+    return None
 
 
 @router.post(
@@ -52,6 +63,7 @@ async def create_random_building_alert(
                 },
             },
             exclude_overlay_types={"occupant"},
+            target_scope_node_id=_alert_scope_node_id(building_id),
         )
     except BuildingNotFoundError as exc:
         raise HTTPException(
@@ -71,7 +83,7 @@ async def create_random_building_alert(
     except SceneGraphOverlayTargetNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="No available node without occupant overlay.",
+            detail="No available alert target in the configured area.",
         ) from exc
     except SceneGraphMutationError as exc:
         raise HTTPException(

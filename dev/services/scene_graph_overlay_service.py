@@ -18,6 +18,7 @@ async def add_random_node_overlay(
     overlay_type: str,
     overlay: dict[str, Any],
     exclude_overlay_types: set[str] | None = None,
+    target_scope_node_id: str | None = None,
 ) -> None:
     latest_graph = await building_access_repository.get_latest_scene_graph(building_id)
     if latest_graph is None:
@@ -27,6 +28,7 @@ async def add_random_node_overlay(
     position, target_node_id = _random_node_asset_target(
         scene_graph,
         exclude_overlay_types or set(),
+        target_scope_node_id,
     )
     next_overlay = {
         **overlay,
@@ -58,19 +60,75 @@ def _decode_graph_json(graph_json: Any) -> Any:
 def _random_node_asset_target(
     scene_graph: Any,
     exclude_overlay_types: set[str],
+    target_scope_node_id: str | None,
 ) -> tuple[dict[str, float], str | None]:
     excluded_node_ids = _overlay_target_node_ids(scene_graph, exclude_overlay_types)
+    target_scope_node, allowed_node_ids = _target_scope(
+        scene_graph,
+        target_scope_node_id,
+    )
     candidates = [
         (node, asset_position)
         for node in _nodes(scene_graph)
+        if allowed_node_ids is None or str(node.get("id")) in allowed_node_ids
         if str(node.get("id")) not in excluded_node_ids
         for asset_position in _asset_positions(node)
     ]
+    if not candidates and target_scope_node is not None:
+        bounding_box_position = _bounding_box_position(target_scope_node)
+        if bounding_box_position is not None:
+            candidates.append((target_scope_node, bounding_box_position))
+
     if not candidates:
         raise SceneGraphOverlayTargetNotFoundError
 
     target_node, position = random.choice(candidates)
     return (position, str(target_node.get("id")) if target_node.get("id") else None)
+
+
+def _target_scope(
+    scene_graph: Any,
+    target_scope_node_id: str | None,
+) -> tuple[dict[str, Any] | None, set[str] | None]:
+    if target_scope_node_id is None:
+        return None, None
+
+    target_scope_node = next(
+        (
+            node
+            for node in _nodes(scene_graph)
+            if str(node.get("id")) == target_scope_node_id
+        ),
+        None,
+    )
+    if target_scope_node is None:
+        raise SceneGraphOverlayTargetNotFoundError
+
+    allowed_node_ids = {target_scope_node_id}
+    zones = target_scope_node.get("zones")
+    if isinstance(zones, list):
+        allowed_node_ids.update(str(zone_id) for zone_id in zones if zone_id)
+
+    return target_scope_node, allowed_node_ids
+
+
+def _bounding_box_position(node: dict[str, Any]) -> dict[str, float] | None:
+    geometry = node.get("geometry")
+    if not isinstance(geometry, dict) or geometry.get("type") != "BoundingBox":
+        return None
+
+    position = {}
+    for axis in ("x", "y", "z"):
+        axis_range = geometry.get(f"{axis}_range")
+        if not isinstance(axis_range, list | tuple) or len(axis_range) < 2:
+            return None
+        if not _is_number(axis_range[0]) or not _is_number(axis_range[1]):
+            return None
+
+        lower, upper = sorted((float(axis_range[0]), float(axis_range[1])))
+        position[axis] = random.uniform(lower, upper)
+
+    return position
 
 
 def _nodes(scene_graph: Any) -> list[dict[str, Any]]:

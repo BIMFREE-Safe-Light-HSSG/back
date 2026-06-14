@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from uuid import UUID
 
 from app.repositories import buildings as buildings_repository
 from app.schemas.facility import CreateBuildingRequest
@@ -8,6 +9,14 @@ logger = logging.getLogger("app.services.facility")
 
 
 class FacilityManagerRequiredError(Exception):
+    pass
+
+
+class ManagedBuildingNotFoundError(Exception):
+    pass
+
+
+class ManagedBuildingAccessDeniedError(Exception):
     pass
 
 
@@ -68,3 +77,27 @@ async def create_managed_building(
         building["district_code"],
     )
     return _building_from_row(building)
+
+
+async def delete_managed_building(
+    current_user: dict[str, Any],
+    building_id: UUID,
+) -> None:
+    if current_user.get("job") != "FACILITY_MANAGER":
+        raise FacilityManagerRequiredError
+
+    if await buildings_repository.get_building_by_id(building_id) is None:
+        raise ManagedBuildingNotFoundError
+
+    deleted = await buildings_repository.delete_owned_building(
+        building_id,
+        current_user["id"],
+    )
+    if not deleted:
+        raise ManagedBuildingAccessDeniedError
+
+    logger.info(
+        "building_deleted user_id=%s building_id=%s",
+        current_user["id"],
+        building_id,
+    )
